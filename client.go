@@ -14,6 +14,7 @@ package kosa8
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,9 @@ type Info = map[string]any
 type Client struct {
 	t     *transport
 	ckpts checkpointBook
+
+	stdinMu   sync.Mutex
+	stdinSent map[[2]string]bool
 }
 
 // New returns a Client.
@@ -62,7 +66,7 @@ func New(o Options) (*Client, error) {
 	if store == nil {
 		store = NewFileCheckpointStore("")
 	}
-	return &Client{t: t, ckpts: checkpointBook{store}}, nil
+	return &Client{t: t, ckpts: checkpointBook{store}, stdinSent: map[[2]string]bool{}}, nil
 }
 
 // Endpoint reports where this client sends requests.
@@ -142,14 +146,42 @@ type CreateOptions struct {
 	CPUs   int
 	MemMB  int
 	DiskGB int
-	Mounts []string // host:guest[:ro]
+	Mounts []string // host:guest[:ro]; host must be absolute
 	Egress string   // deny | any | fakenet | allow:host,host
 	// EgressAllow limits the network to these hosts (sets Egress to allow:…).
 	EgressAllow []string
-	Capture     bool
-	Labels      map[string]string
-	Broker      any // the credential-broker config, passed through
-	Approval    string
+	// Capture records the sandbox's network traffic as pcap segments under
+	// Capture.Path on the host. nil records nothing.
+	Capture  *CaptureOptions
+	Labels   map[string]string
+	Broker   any // the credential-broker config, passed through
+	Approval string
+}
+
+// CaptureOptions turn on packet capture for a sandbox.
+type CaptureOptions struct {
+	Path     string // host directory for the pcap segments (required)
+	MaxBytes int64  // per segment; 0 is the daemon's default
+	MaxFiles int    // segments kept; 0 is the daemon's default
+}
+
+// mountBody turns "host:guest[:ro]" into the objects the daemon takes.
+func mountBody(ms []string) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(ms))
+	for _, m := range ms {
+		parts := strings.Split(m, ":")
+		ro := false
+		if len(parts) == 3 && parts[2] == "ro" {
+			ro, parts = true, parts[:2]
+		} else if len(parts) == 3 && parts[2] == "rw" {
+			parts = parts[:2]
+		}
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, usage("mount %q: want host:guest or host:guest:ro", m)
+		}
+		out = append(out, map[string]any{"host_path": parts[0], "guest_path": parts[1], "read_only": ro})
+	}
+	return out, nil
 }
 
 // CreateSandbox is POST /kosa8/v1/sandboxes: boot a microVM sandbox.
@@ -168,7 +200,11 @@ func (c *Client) CreateSandbox(ctx context.Context, o CreateOptions) (Info, erro
 		body["disk_gb"] = o.DiskGB
 	}
 	if len(o.Mounts) > 0 {
-		body["mounts"] = o.Mounts
+		mb, err := mountBody(o.Mounts)
+		if err != nil {
+			return nil, err
+		}
+		body["mounts"] = mb
 	}
 	switch {
 	case len(o.EgressAllow) > 0:
@@ -183,8 +219,18 @@ func (c *Client) CreateSandbox(ctx context.Context, o CreateOptions) (Info, erro
 	case o.Egress != "":
 		body["egress"] = o.Egress
 	}
-	if o.Capture {
-		body["capture"] = true
+	if o.Capture != nil {
+		if o.Capture.Path == "" {
+			return nil, usage("Capture.Path is required: the host directory the pcap segments go to")
+		}
+		cb := map[string]any{"path": o.Capture.Path}
+		if o.Capture.MaxBytes > 0 {
+			cb["max_bytes"] = o.Capture.MaxBytes
+		}
+		if o.Capture.MaxFiles > 0 {
+			cb["max_files"] = o.Capture.MaxFiles
+		}
+		body["capture"] = cb
 	}
 	if len(o.Labels) > 0 {
 		body["labels"] = o.Labels
@@ -328,6 +374,12 @@ func (c *Client) StartContainer(ctx context.Context, sandbox, image string, args
 // Exec is POST …/exec: run a command in a running container of the sandbox.
 func (c *Client) Exec(ctx context.Context, sandbox, container string, args []string, opts *RunOptions) (ExecResult, error) {
 	o := ro(opts)
+	if len(o.Env) > 0 {
+		// The daemon's exec takes no environment; dropping it silently would
+		// run the command without the variables the caller asked for.
+		return ExecResult{}, usage("Exec does not take Env: the container keeps the environment it was started with. " +
+			"Set it at StartContainer/StartInteractive, or wrap the command: []string{\"env\", \"K=V\", \"cmd\"}")
+	}
 	ctx, cancel := withTimeout(ctx, o.Timeout)
 	defer cancel()
 	return c.collect(ctx, c.execReq(sandbox, container, args, o.Approval), o)
@@ -339,8 +391,22 @@ func (c *Client) execReq(sandbox, container string, args []string, appr string) 
 
 // ExecFrames is the raw frame stream of an exec, for callers that process
 // output as it arrives. Return an error from fn to stop.
+//
+// A final frame that carries an error is passed to fn and then returned as a
+// KindStream error, as Exec would return it.
 func (c *Client) ExecFrames(ctx context.Context, sandbox, container string, args []string, fn func(Frame) error, call ...Call) error {
-	return c.t.frames(ctx, c.execReq(sandbox, container, args, approval(call)), fn)
+	r := c.execReq(sandbox, container, args, approval(call))
+	var final error
+	err := c.t.frames(ctx, r, func(f Frame) error {
+		if f.Done && f.Error != "" {
+			final = &Error{Kind: KindStream, Message: f.Error, DaemonMessage: f.Error, Method: r.method, Path: r.path}
+		}
+		return fn(f)
+	})
+	if err != nil {
+		return err
+	}
+	return final
 }
 
 // InteractiveOptions for StartInteractive.
@@ -361,7 +427,22 @@ func (c *Client) StartInteractive(ctx context.Context, sandbox, image string, ar
 }
 
 // WriteStdin is POST …/containers/{cid}/stdin: stream r into the container's stdin.
+//
+// r is the container's whole stdin: the daemon closes stdin when r is
+// exhausted, so call this once per container and pass a reader that yields
+// over time (an io.Pipe) to feed input as you go. A second call returns a
+// KindUsage error instead of reporting success for input the process would
+// never see.
 func (c *Client) WriteStdin(ctx context.Context, sandbox, container string, r io.Reader, call ...Call) (Info, error) {
+	key := [2]string{sandbox, container}
+	c.stdinMu.Lock()
+	if c.stdinSent[key] {
+		c.stdinMu.Unlock()
+		return nil, usage("stdin of container %s in %s was already sent and is closed: the daemon treats one WriteStdin "+
+			"body as the whole of stdin. Pass an io.Pipe reader to stream input", container, sandbox)
+	}
+	c.stdinSent[key] = true
+	c.stdinMu.Unlock()
 	var out Info
 	return out, c.t.json(ctx, request{method: "POST", path: sbPath(sandbox, "containers", enc(container), "stdin"), rawBody: r, approval: approval(call)}, &out)
 }
@@ -689,9 +770,22 @@ func (c *Client) Checkpoint(ctx context.Context, sandbox, label string, call ...
 	if err != nil {
 		return CheckpointResult{}, err
 	}
-	snap, err := c.Snapshot(ctx, sandbox, SnapshotOptions{ID: id, Approval: approval(call)})
-	if err != nil {
-		return CheckpointResult{}, err
+	// Two checkpoints taken at once (here or by the CLI) can pick the same
+	// next id; the loser's snapshot is refused with 409. The winner records
+	// its id only once its snapshot is done, so step past the taken id
+	// rather than re-reading the store.
+	var snap Info
+	for attempt := 0; ; attempt++ {
+		snap, err = c.Snapshot(ctx, sandbox, SnapshotOptions{ID: id, Approval: approval(call)})
+		if err == nil {
+			break
+		}
+		var ke *Error
+		if attempt == 9 || !errors.As(err, &ke) || ke.Kind != KindConflict ||
+			!strings.Contains(ke.DaemonMessage+ke.Message, "already exists") {
+			return CheckpointResult{}, err
+		}
+		id = fmt.Sprintf("%s-ckpt-%d", sandbox, seqOf(id, sandbox)+1)
 	}
 	for _, old := range evict {
 		_, _ = c.DeleteSnapshot(ctx, old, SnapshotDeleteOptions{Approval: approval(call)})
@@ -736,7 +830,8 @@ func (c *Client) Rewind(ctx context.Context, sandbox, to string, call ...Call) (
 	restored, err := c.RestoreSnapshot(ctx, target.ID, RestoreOptions{Name: sandbox, Approval: approval(call)})
 	if err != nil {
 		return RewindResult{}, &Error{Kind: KindCheckpoint, Err: err, Message: fmt.Sprintf(
-			"restore failed and %s is now stopped: %v — recover with RestoreSnapshot(%q, RestoreOptions{Name: %q})", sandbox, err, target.ID, sandbox)}
+			"restore failed and %s no longer exists (it was deleted to free its name for the restore): %v — the checkpoint is intact; "+
+				"recover with RestoreSnapshot(%q, RestoreOptions{Name: %q})", sandbox, err, target.ID, sandbox)}
 	}
 	dropped, err := c.ckpts.pop(sandbox, target.ID)
 	if err == nil {

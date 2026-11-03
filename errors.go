@@ -76,6 +76,7 @@ var (
 	ErrStream           = &Error{Kind: KindStream}
 	ErrCheckpoint       = &Error{Kind: KindCheckpoint}
 	ErrTimeout          = &Error{Kind: KindTimeout}
+	ErrUsage            = &Error{Kind: KindUsage}
 )
 
 // AsError returns err as *Error, if it is one.

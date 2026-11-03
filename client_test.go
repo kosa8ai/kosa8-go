@@ -488,3 +488,87 @@ func TestRemoteBearer(t *testing.T) {
 		t.Fatalf("auth %q err %v", auth, err)
 	}
 }
+
+func TestFixesMountsCaptureExecEnv(t *testing.T) {
+	m := newMock(t)
+	m.on("POST", "/kosa8/v1/sandboxes", func(w http.ResponseWriter, r *http.Request) { sendJSON(w, 201, map[string]any{"ok": true}) })
+	c := m.client(t, nil)
+	ctx := context.Background()
+	if _, err := c.CreateSandbox(ctx, CreateOptions{Mounts: []string{"/src:/work:ro", "/data:/data"}, Capture: &CaptureOptions{Path: "/tmp/pcap"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := m.last()
+	var b struct {
+		Mounts  []map[string]any `json:"mounts"`
+		Capture map[string]any   `json:"capture"`
+	}
+	_ = json.Unmarshal([]byte(body), &b)
+	if len(b.Mounts) != 2 || b.Mounts[0]["guest_path"] != "/work" || b.Mounts[0]["read_only"] != true || b.Mounts[1]["read_only"] != false {
+		t.Fatalf("mounts body %s", body)
+	}
+	if b.Capture["path"] != "/tmp/pcap" {
+		t.Fatalf("capture body %s", body)
+	}
+	if _, err := c.CreateSandbox(ctx, CreateOptions{Mounts: []string{"nocolon"}}); !errors.Is(err, ErrUsage) {
+		t.Fatalf("bad mount: %v", err)
+	}
+	if _, err := c.CreateSandbox(ctx, CreateOptions{Capture: &CaptureOptions{}}); !errors.Is(err, ErrUsage) {
+		t.Fatalf("capture without path: %v", err)
+	}
+	if _, err := c.Exec(ctx, "s", "c", []string{"true"}, &RunOptions{Env: []string{"A=1"}}); !errors.Is(err, ErrUsage) {
+		t.Fatalf("exec env: %v", err)
+	}
+}
+
+func TestFixesStdinOnceAndExecFramesError(t *testing.T) {
+	m := newMock(t)
+	m.on("POST", "/kosa8/v1/sandboxes/s/containers/c/stdin", func(w http.ResponseWriter, r *http.Request) { sendJSON(w, 200, map[string]any{"ok": true}) })
+	m.on("POST", "/kosa8/v1/sandboxes/s/exec", func(w http.ResponseWriter, r *http.Request) {
+		sendFrames(w, map[string]any{"done": true, "error": "no such container"})
+	})
+	c := m.client(t, nil)
+	ctx := context.Background()
+	if _, err := c.WriteStdin(ctx, "s", "c", strings.NewReader("hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.WriteStdin(ctx, "s", "c", strings.NewReader("again\n")); !errors.Is(err, ErrUsage) {
+		t.Fatalf("second stdin: %v", err)
+	}
+	seen := 0
+	err := c.ExecFrames(ctx, "s", "c", []string{"x"}, func(Frame) error { seen++; return nil })
+	if !errors.Is(err, ErrStream) || seen != 1 {
+		t.Fatalf("exec frames: err=%v seen=%d", err, seen)
+	}
+}
+
+func TestFixesCheckpointCollisionStepsID(t *testing.T) {
+	m := newMock(t)
+	var ids []string
+	var mu sync.Mutex
+	m.on("POST", "/kosa8/v1/sandboxes/s/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			ID string `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		mu.Lock()
+		ids = append(ids, b.ID)
+		first := len(ids) == 1
+		mu.Unlock()
+		if first {
+			sendJSON(w, 409, map[string]any{"error": "snapshot already exists: s-ckpt-1"})
+			return
+		}
+		sendJSON(w, 201, map[string]any{"id": b.ID})
+	})
+	m.on("POST", "/kosa8/v1/sandboxes/t/snapshot", func(w http.ResponseWriter, r *http.Request) {
+		sendJSON(w, 409, map[string]any{"error": "sandbox busy"})
+	})
+	c := m.client(t, nil)
+	res, err := c.Checkpoint(context.Background(), "s", "a")
+	if err != nil || res.Checkpoint.ID != "s-ckpt-2" || strings.Join(ids, ",") != "s-ckpt-1,s-ckpt-2" {
+		t.Fatalf("res=%+v err=%v ids=%v", res, err, ids)
+	}
+	if _, err := c.Checkpoint(context.Background(), "t", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("other conflict: %v", err)
+	}
+}
