@@ -7,7 +7,7 @@ Fixes found while writing and testing the docs at https://docs.kosa8.com/guides/
 - **`CreateOptions.Mounts` works.** The `host:guest[:ro]` strings are now sent as the
   objects the daemon takes; v0.1.0 sent the strings and every mount was refused with
   `500 mount has no guest path`. A malformed entry is a `KindUsage` error.
-- **`CreateOptions.Capture` is now `*CaptureOptions{Path, MaxBytes, MaxFiles}`** (was
+- **`CreateOptions.Capture` is now `*CaptureOptions{Path, MaxBytes, MaxFiles}`** (Path is the host file to write; was
   `bool`, which the daemon always refused with `capture: no output path`). This is a
   source-level change, but `Capture: true` never worked.
 - **`Exec` with `RunOptions.Env` returns a `KindUsage` error** instead of silently running

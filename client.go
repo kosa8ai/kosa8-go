@@ -151,16 +151,16 @@ type CreateOptions struct {
 	// EgressAllow limits the network to these hosts (sets Egress to allow:…).
 	EgressAllow []string
 	// Capture records the sandbox's network traffic as pcap segments under
-	// Capture.Path on the host. nil records nothing.
+	// Capture.Path, a file on the host (pcapng). nil records nothing.
 	Capture  *CaptureOptions
 	Labels   map[string]string
 	Broker   any // the credential-broker config, passed through
 	Approval string
 }
 
-// CaptureOptions turn on packet capture for a sandbox.
+// CaptureOptions turn on packet capture for a sandbox (daemon 0.9.36 writes one pcapng file at Path).
 type CaptureOptions struct {
-	Path     string // host directory for the pcap segments (required)
+	Path     string // host file the capture is written to (required)
 	MaxBytes int64  // per segment; 0 is the daemon's default
 	MaxFiles int    // segments kept; 0 is the daemon's default
 }
@@ -221,7 +221,7 @@ func (c *Client) CreateSandbox(ctx context.Context, o CreateOptions) (Info, erro
 	}
 	if o.Capture != nil {
 		if o.Capture.Path == "" {
-			return nil, usage("Capture.Path is required: the host directory the pcap segments go to")
+			return nil, usage("Capture.Path is required: the host file the capture is written to")
 		}
 		cb := map[string]any{"path": o.Capture.Path}
 		if o.Capture.MaxBytes > 0 {
