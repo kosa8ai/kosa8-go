@@ -437,7 +437,7 @@ func TestFileStoreSharedWithCLI(t *testing.T) {
 	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 { // Windows has no unix modes
 		t.Fatalf("mode %v", st.Mode())
 	}
-	if _, err := os.Stat(path + ".lock"); err != nil {
+	if _, err := os.Stat(path + ".lock"); err != nil && runtime.GOOS != "windows" { // no flock on Windows (lock_other.go)
 		t.Fatal("lock file missing: the CLI locks the same file")
 	}
 	raw, _ := os.ReadFile(path)
