@@ -1,8 +1,9 @@
 // Package kosa8 is the Go SDK for kosa8: microVM sandboxes for AI agents.
 //
 // It talks to the local kosa8 daemon over its unix socket
-// (~/.kosa8/run/kosa8.sock), or to a remote worker via KOSA8_HOST and
-// KOSA8_TOKEN, using only the standard library. Method for method it matches
+// (~/.kosa8/run/kosa8.sock), to a remote worker via KOSA8_HOST and
+// KOSA8_TOKEN, or to the connection the CLI saved in ~/.kosa8/worker.json
+// (`kosa8 wsl setup` on Windows, `kosa8 worker join`), using only the standard library. Method for method it matches
 // @kosa8/sdk (TypeScript) and kosa8 (Python).
 //
 //	k, _ := kosa8.New(kosa8.Options{})
@@ -35,10 +36,15 @@ type Options struct {
 	Host       string // a remote worker; default $KOSA8_HOST
 	Token      string // bearer token for Host; default $KOSA8_TOKEN when Host came from the env
 	Insecure   bool   // allow plain http to a non-loopback worker
-	Actor      string // human | agent | tool (default tool)
-	AgentToken string // default $KOSA8_AGENT_TOKEN
-	Headers    map[string]string
-	HTTPClient *http.Client // overrides the transport entirely
+	// WorkerFile is the saved connection read when neither Host, KOSA8_HOST
+	// nor SocketPath is set (default DefaultWorkerFile: ~/.kosa8/worker.json,
+	// written by `kosa8 wsl setup` and `kosa8 worker join`).
+	WorkerFile   string
+	NoWorkerFile bool   // never read a worker file
+	Actor        string // human | agent | tool (default tool)
+	AgentToken   string // default $KOSA8_AGENT_TOKEN
+	Headers      map[string]string
+	HTTPClient   *http.Client // overrides the transport entirely
 	// Checkpoints is where checkpoint stacks live. Default: the CLI's own
 	// ~/.kosa8/checkpoints.json, so `kosa8 rewind` and this SDK share them.
 	Checkpoints CheckpointStore

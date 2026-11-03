@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,11 @@ type mockDaemon struct {
 
 func newMock(t *testing.T) *mockDaemon {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "k8go") // short: unix socket paths are limited to ~104 bytes
+	base := "/tmp" // short: unix socket paths are limited to ~104 bytes
+	if runtime.GOOS == "windows" {
+		base = "" // %TEMP%; Windows 10+ has AF_UNIX
+	}
+	dir, err := os.MkdirTemp(base, "k8go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +43,9 @@ func newMock(t *testing.T) *mockDaemon {
 	m := &mockDaemon{sock: filepath.Join(dir, "k.sock"), routes: map[string]http.HandlerFunc{}}
 	ln, err := net.Listen("unix", m.sock)
 	if err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("no unix sockets here: %v", err)
+		}
 		t.Fatal(err)
 	}
 	m.srv = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +192,7 @@ func TestTypedErrors(t *testing.T) {
 }
 
 func TestConnectionError(t *testing.T) {
-	c, _ := New(Options{SocketPath: "/tmp/k8go-nope.sock", Checkpoints: &MemoryCheckpointStore{}, Getenv: func(string) string { return "" }})
+	c, _ := New(Options{SocketPath: filepath.Join(os.TempDir(), "k8go-nope.sock"), Checkpoints: &MemoryCheckpointStore{}, Getenv: func(string) string { return "" }})
 	_, err := c.Health(ctx)
 	if !errors.Is(err, ErrConnection) || !strings.Contains(err.Error(), "kosa8 daemon start") {
 		t.Fatalf("got %v", err)

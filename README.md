@@ -28,8 +28,24 @@ _, _ = sb.Delete(ctx, kosa8.DeleteOptions{})
 | `Options.SocketPath` | `~/.kosa8/run/kosa8.sock` |
 | `Options.Host` / `KOSA8_HOST` | a remote worker: `https://`, `http://` (loopback only unless `Insecure` / `KOSA8_INSECURE=1`), `tcp://`, `unix://` |
 | `Options.Token` / `KOSA8_TOKEN` | sent as `Authorization: Bearer` to a remote worker |
+| `Options.WorkerFile` | `~/.kosa8/worker.json` (`%USERPROFILE%\.kosa8\worker.json` on Windows); `NoWorkerFile` skips it |
 | `Options.Actor` | `tool` (`human`, `agent`, `tool`), sent as `X-Kosa8-Actor` |
 | `Options.AgentToken` / `KOSA8_AGENT_TOKEN` | sent as `X-Kosa8-Agent-Token` |
+
+The client picks its endpoint as the CLI does:
+
+1. `Options.Host`, else a non-blank `KOSA8_HOST` (with `Options.Token`, else `KOSA8_TOKEN`).
+2. Else, unless `Options.SocketPath` is set, the connection the CLI saved in the worker file:
+   `kosa8 wsl setup` writes it on Windows, where the engine runs in WSL2, and `kosa8 worker join`
+   writes it on any OS. Its `host` takes the same spellings as `KOSA8_HOST`; its `token` is sent
+   unless `Options.Token` is set; `"insecure": true` (or `Insecure` / `KOSA8_INSECURE=1`) allows
+   plain http to a non-loopback host. A missing or malformed file is ignored. A saved token is
+   never sent to a host from `Options.Host` or `KOSA8_HOST`.
+3. Else the unix socket.
+
+`Client.Endpoint().Target()` shows where requests go; `kosa8.Resolve(opts)` answers without
+building a client. On Windows, a failed connection to the default socket says to run
+`kosa8 wsl setup` or set `KOSA8_HOST`.
 
 ## Errors
 
