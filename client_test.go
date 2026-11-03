@@ -509,6 +509,9 @@ func TestFixesMountsCaptureExecEnv(t *testing.T) {
 	if b.Capture["path"] != "/tmp/pcap" {
 		t.Fatalf("capture body %s", body)
 	}
+	if _, err := c.CreateSandbox(ctx, CreateOptions{Mounts: []string{"rel/dir:/work"}}); !errors.Is(err, ErrUsage) {
+		t.Fatalf("relative mount: %v", err)
+	}
 	if _, err := c.CreateSandbox(ctx, CreateOptions{Mounts: []string{"nocolon"}}); !errors.Is(err, ErrUsage) {
 		t.Fatalf("bad mount: %v", err)
 	}

@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,7 +27,7 @@ import (
 )
 
 // Version of this SDK.
-const Version = "0.1.0"
+const Version = "0.1.2"
 
 // Options configures a Client. The zero value talks to the local daemon.
 type Options struct {
@@ -178,6 +179,9 @@ func mountBody(ms []string) ([]map[string]any, error) {
 		}
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return nil, usage("mount %q: want host:guest or host:guest:ro", m)
+		}
+		if !filepath.IsAbs(parts[0]) || !strings.HasPrefix(parts[1], "/") {
+			return nil, usage("mount %q: both paths must be absolute (use filepath.Abs for the host side)", m)
 		}
 		out = append(out, map[string]any{"host_path": parts[0], "guest_path": parts[1], "read_only": ro})
 	}
@@ -378,7 +382,7 @@ func (c *Client) Exec(ctx context.Context, sandbox, container string, args []str
 		// The daemon's exec takes no environment; dropping it silently would
 		// run the command without the variables the caller asked for.
 		return ExecResult{}, usage("Exec does not take Env: the container keeps the environment it was started with. " +
-			"Set it at StartContainer/StartInteractive, or wrap the command: []string{\"env\", \"K=V\", \"cmd\"}")
+			"Set it at StartInteractive (InteractiveOptions.Env), or wrap the command: []string{\"env\", \"K=V\", \"cmd\"}")
 	}
 	ctx, cancel := withTimeout(ctx, o.Timeout)
 	defer cancel()

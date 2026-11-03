@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.2 — 2026-11-03
+
+- **`Version` reports `0.1.2`** (v0.1.1 still said `0.1.0`).
+- **`CaptureOptions.Path` is documented as the host file the capture is written to** (pcapng),
+  not a directory; the usage error says so too. Passing a directory fails on the daemon
+  with `capture: open …: is a directory`.
+- **Mounts must use absolute paths on both sides**; a relative one is a `KindUsage` error
+  before the request.
+- **The `Exec` Env error points at `StartInteractive`'s `InteractiveOptions.Env`**, not
+  `StartContainer`, which takes no environment.
+
 ## v0.1.1 — 2026-11-03
 
 Fixes found while writing and testing the docs at https://docs.kosa8.com/guides/go-guide/.
