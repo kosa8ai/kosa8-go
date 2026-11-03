@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **kosa8 Cloud client**, matching `Kosa8Cloud` in `kosa8` (Python) and `@kosa8/sdk`: `NewCloud`
+  (`CloudOptions`: `APIKey` / `KOSA8_API_KEY`, which must start with `k8c_live_`; `BaseURL` /
+  `KOSA8_CLOUD_URL`, default `https://api.kosa8.cloud`, https only except localhost; `HTTPClient`;
+  `Timeout`, default 120 s). The key is never printed.
+- **Sandboxes**: `Sandboxes.Create` / `List` / `Get`; `CloudSandbox.Exec` (argv), `ExecShell`
+  (`sh -c`), `Sleep`, `Wake`, `Refresh`, `Delete`. `CloudExecResult.WokeMs` is set when a sleeping
+  sandbox woke for the command.
+- **Functions**: `Functions.Deploy` / `List` / `Get` / `Delete` / `Invoke` / `Map`, with typed
+  `CloudInvokeResult` (`Result` is `json.RawMessage`; `DecodeResult`) and `CloudMapResult`.
+- `Cloud.Me`, `Cloud.Usage`.
+- **Errors**: `Error.Code` carries the cloud's stable code and `Message` its sentence. New kinds
+  `KindPaymentRequired` (402, `ErrPaymentRequired`) and `KindRateLimit` (429, `ErrRateLimit`),
+  both also `ErrAPI`; they apply to daemon answers with those statuses too.
+
 ## v0.2.0 — 2026-11-03
 
 The sandbox toolbox, matching `kosa8` (Python) 0.2.0 and the daemon's v0.13.0 routes.

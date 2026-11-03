@@ -35,7 +35,7 @@ _, _ = sb.Delete(ctx, kosa8.DeleteOptions{})
 
 Every error is a `*kosa8.Error` with a `Kind`, the daemon's own message and its remediation.
 Use `errors.Is(err, kosa8.ErrNotFound)`, `ErrPolicy`, `ErrApprovalRequired` (read `e.Approval`),
-`ErrConflict`, `ErrConnection`, `ErrStream` (output so far in `e.Stdout`/`e.Stderr`), `ErrTimeout`.
+`ErrConflict`, `ErrPaymentRequired` (402), `ErrRateLimit` (429), `ErrConnection`, `ErrStream` (output so far in `e.Stdout`/`e.Stderr`), `ErrTimeout`.
 A policy that needs a signed approval takes it per call: `kosa8.Call{Approval: sig}`.
 
 ## API
@@ -68,6 +68,38 @@ Files: `ListFiles`, `StatFile`, `ReadFile`, `ReadFileTo`, `WriteFile` (`io.Reade
 Git: `Git`, `GitClone`, `GitStatus`, `GitCommit`. Sessions: `CreateSession`, `ListSessions`, `SessionExec`, `Shell`, `DeleteSession`.
 Terminals: `StartPTY`, `ResizePTY`, `TTYPath`. Previews: `CreatePreview`, `RevokePreviews`. Lifecycle: `SetLifecycle`,
 and `CreateOptions.AutoStopMin` / `TTLMin` / `AutoDeleteMin` / `Ephemeral`. Templates: `ListTemplates`, `BuildTemplate`, `DeleteTemplate`.
+
+## kosa8 Cloud
+
+The same sandboxes on kosa8 Cloud instead of the local daemon. Make an API
+key in the cloud dashboard and set `KOSA8_API_KEY` (and `KOSA8_CLOUD_URL` to
+point somewhere other than `https://api.kosa8.cloud`).
+
+```go
+cloud, _ := kosa8.NewCloud(kosa8.CloudOptions{}) // or CloudOptions{APIKey: "k8c_live_..."}
+
+box, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Template: "python", SleepAfterS: kosa8.Ptr(600)})
+r, _ := box.Exec(ctx, []string{"python3", "-c", "print(6 * 7)"}, nil)
+fmt.Println(*r.ExitCode, r.Stdout)      // 0 42
+_ = box.Sleep(ctx)                      // costs only snapshot storage while asleep
+_, _ = box.ExecShell(ctx, "ls /workspace", nil) // wakes it, files and all
+_ = box.Delete(ctx)
+
+_, _ = cloud.Functions.Deploy(ctx, "hello", kosa8.CloudFunctionSpec{
+	Runtime: "python3.12",
+	Code:    "def handler(event):\n    return {\"hello\": event.get(\"name\", \"world\")}\n",
+})
+out, _ := cloud.Functions.Invoke(ctx, "hello", map[string]any{"name": "kosa8"})
+fmt.Println(out.OK, string(out.Result)) // true {"hello":"kosa8"}
+```
+
+A new organization runs nothing until a payment method is on file; until
+then creating a sandbox fails with `errors.Is(err, kosa8.ErrPaymentRequired)`
+(`e.Code == "payment_required"`), whose message says what to do. Every error
+from the cloud carries its stable `Code`; 429 is `ErrRateLimit`. A function
+that raised is `out.OK == false` with `out.Error`, not a Go error.
+Also: `Sandboxes.List` / `Get`, `CloudSandbox.Wake` / `Refresh`, `Functions.List` / `Get` /
+`Delete` / `Map`, `Cloud.Me`, `Cloud.Usage`.
 
 ## Development
 
