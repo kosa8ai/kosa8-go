@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.2.0 — 2026-11-03
+
+The sandbox toolbox, matching `kosa8` (Python) 0.2.0 and the daemon's v0.13.0 routes.
+
+- **Run code**: `RunCode` runs a Python, JavaScript or TypeScript snippet in `/workspace`;
+  `CodeResult.Artifacts` carries charts as decoded PNG bytes. A non-zero exit is not an error.
+- **Files**: `ListFiles`, `StatFile`, `ReadFile` / `ReadFileTo` (an `io.Writer`; a short body is
+  a `KindStream` error), `WriteFile` (an `io.Reader`, chunked when its length is unknown) /
+  `WriteFileBytes`, `DeleteFile` (`Recursive`), `MakeDir`, `MoveFile`. Typed `FileInfo`.
+- **Git**: `Git` (any op) plus `GitClone`, `GitStatus` (parsed `GitStatus`) and `GitCommit`, which
+  stages first (`GitOptions.Files`, or everything; `NoStage` skips it). A git failure is
+  `GitResult.OK == false`, not an error.
+- **Sessions**: `CreateSession`, `ListSessions`, `SessionExec`, `DeleteSession`, and `Shell`, which
+  makes the session (default `main`) the first time it is told `no such session`.
+- **Terminals**: `StartPTY`, `ResizePTY`, `TTYPath` for the WebSocket route.
+- **Previews**: `CreatePreview` (typed `Preview`), `RevokePreviews`.
+- **Lifecycle**: `SetLifecycle` (`LifecycleOptions` with pointer fields: nil keeps, 0 turns off;
+  `kosa8.Ptr(30)`), and `CreateOptions.AutoStopMin`, `TTLMin`, `AutoDeleteMin`, `Ephemeral`.
+- **Templates**: `ListTemplates`, `DeleteTemplate`, `BuildTemplate` (tars a context folder,
+  honouring `.dockerignore`; a failed build is a `KindStream` error), and `CreateOptions.Template`.
+- Every toolbox method is also on the `Sandbox` handle. `Frame.Image` carries a build's image.
+- Still standard library only.
+
+Known daemon behaviour (v0.13.0): `DeleteSession` answers `500 cannot delete running task …:
+failed precondition` although the session is gone moments later.
+
 ## v0.1.2 — 2026-11-03
 
 - **`Version` reports `0.1.2`** (v0.1.1 still said `0.1.0`).

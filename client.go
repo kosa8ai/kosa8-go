@@ -27,7 +27,7 @@ import (
 )
 
 // Version of this SDK.
-const Version = "0.1.2"
+const Version = "0.2.0"
 
 // Options configures a Client. The zero value talks to the local daemon.
 type Options struct {
@@ -153,9 +153,18 @@ type CreateOptions struct {
 	EgressAllow []string
 	// Capture records the sandbox's network traffic as pcap segments under
 	// Capture.Path, a file on the host (pcapng). nil records nothing.
-	Capture  *CaptureOptions
-	Labels   map[string]string
-	Broker   any // the credential-broker config, passed through
+	Capture *CaptureOptions
+	Labels  map[string]string
+	Broker  any // the credential-broker config, passed through
+	// Lifecycle: AutoStopMin stops the sandbox after that many idle minutes,
+	// TTLMin that long after creation, AutoDeleteMin deletes it once stopped
+	// that long, and Ephemeral deletes it whenever it stops. 0 is off.
+	AutoStopMin   int
+	TTLMin        int
+	AutoDeleteMin int
+	Ephemeral     bool
+	// Template starts the sandbox with a template's image (BuildTemplate).
+	Template string
 	Approval string
 }
 
@@ -241,6 +250,24 @@ func (c *Client) CreateSandbox(ctx context.Context, o CreateOptions) (Info, erro
 	}
 	if o.Broker != nil {
 		body["broker"] = o.Broker
+	}
+	if o.AutoStopMin < 0 || o.TTLMin < 0 || o.AutoDeleteMin < 0 {
+		return nil, usage("AutoStopMin, TTLMin and AutoDeleteMin are minutes: 0 or more")
+	}
+	if o.AutoStopMin > 0 {
+		body["auto_stop_min"] = o.AutoStopMin
+	}
+	if o.AutoDeleteMin > 0 {
+		body["auto_delete_min"] = o.AutoDeleteMin
+	}
+	if o.TTLMin > 0 {
+		body["ttl_min"] = o.TTLMin
+	}
+	if o.Ephemeral {
+		body["ephemeral"] = true
+	}
+	if o.Template != "" {
+		body["template"] = o.Template
 	}
 	var out Info
 	return out, c.t.json(ctx, request{method: "POST", path: "/kosa8/v1/sandboxes", body: body, approval: o.Approval}, &out)

@@ -46,7 +46,28 @@ Sandboxes: `ListSandboxes`, `GetSandbox`, `CreateSandbox`, `StartSandbox`, `Stop
 Processes: `Run`, `StartContainer`, `Exec`, `ExecFrames`, `StartInteractive`, `WriteStdin`, `Attach`.
 Snapshots: `Snapshot`, `ListSnapshots`, `RestoreSnapshot`, `DeleteSnapshot`, `Fork`, `Explore`.
 Checkpoints: `Checkpoint`, `ListCheckpoints`, `Rewind` (store: `~/.kosa8/checkpoints.json`, flock-shared with the CLI).
+Toolbox: see below.
 `Client.Sandbox(id)` binds all of them to one sandbox.
+
+## Toolbox
+
+```go
+sb := k.Sandbox("demo")
+code, _ := sb.RunCode(ctx, "print(6*7)", nil)                     // python | javascript | typescript
+_, _ = sb.WriteFileBytes(ctx, "app/main.py", []byte("print(1)"), nil) // paths under /workspace
+data, _ := sb.ReadFile(ctx, "app/main.py")
+_, _ = sb.GitClone(ctx, "https://github.com/owner/repo", "/workspace/repo", nil)
+_, _ = sb.GitCommit(ctx, "/workspace/repo", "fix", &kosa8.GitOptions{AuthorName: "bot", AuthorEmail: "bot@x"}) // stages first
+out, _ := sb.Shell(ctx, "cd repo && make test", nil)                // a session that keeps cd and export
+p, _ := sb.CreatePreview(ctx, 8000, &kosa8.PreviewOptions{Session: "main"}) // signed link to a port
+_, _ = sb.SetLifecycle(ctx, kosa8.LifecycleOptions{AutoStopMin: kosa8.Ptr(30)})
+_, _ = k.BuildTemplate(ctx, "py-data", "./ctx", nil)                // then CreateOptions{Template: "py-data"}
+```
+
+Files: `ListFiles`, `StatFile`, `ReadFile`, `ReadFileTo`, `WriteFile` (`io.Reader`), `WriteFileBytes`, `DeleteFile`, `MakeDir`, `MoveFile`.
+Git: `Git`, `GitClone`, `GitStatus`, `GitCommit`. Sessions: `CreateSession`, `ListSessions`, `SessionExec`, `Shell`, `DeleteSession`.
+Terminals: `StartPTY`, `ResizePTY`, `TTYPath`. Previews: `CreatePreview`, `RevokePreviews`. Lifecycle: `SetLifecycle`,
+and `CreateOptions.AutoStopMin` / `TTLMin` / `AutoDeleteMin` / `Ephemeral`. Templates: `ListTemplates`, `BuildTemplate`, `DeleteTemplate`.
 
 ## Development
 
