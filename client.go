@@ -20,7 +20,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -195,8 +194,10 @@ func mountBody(ms []string) ([]map[string]any, error) {
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return nil, usage("mount %q: want host:guest or host:guest:ro", m)
 		}
-		if !filepath.IsAbs(parts[0]) || !strings.HasPrefix(parts[1], "/") {
-			return nil, usage("mount %q: both paths must be absolute (use filepath.Abs for the host side)", m)
+		// The daemon's filesystem is POSIX (WSL2 on Windows), so the host side
+		// is checked as a POSIX path on every OS.
+		if !strings.HasPrefix(parts[0], "/") || !strings.HasPrefix(parts[1], "/") {
+			return nil, usage("mount %q: both paths must be absolute (/...), the host side as the daemon sees it", m)
 		}
 		out = append(out, map[string]any{"host_path": parts[0], "guest_path": parts[1], "read_only": ro})
 	}

@@ -9,6 +9,8 @@
   New `Options.WorkerFile` / `NoWorkerFile`, `Resolve` and `DefaultWorkerFile`; `ResolveEndpoint`
   is unchanged and does not read the file. On Windows a failed connection to the default socket
   hints at `kosa8 wsl setup` or `KOSA8_HOST`.
+- `CreateOptions.Mounts`: the host side is checked as a POSIX absolute path on every OS (the
+  daemon's filesystem; WSL2 on Windows), so `/src:/work` is accepted from Windows.
 - **CI**: unit tests on ubuntu, macOS and Windows (`.github/workflows/ci.yml`). The mock daemon's
   unix socket works on Windows (AF_UNIX); the tests skip it if a runner lacks it.
 - **kosa8 Cloud client**, matching `Kosa8Cloud` in `kosa8` (Python) and `@kosa8/sdk`: `NewCloud`

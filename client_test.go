@@ -434,7 +434,7 @@ func TestFileStoreSharedWithCLI(t *testing.T) {
 		t.Fatalf("store %+v", d)
 	}
 	st, _ := os.Stat(path)
-	if st.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 { // Windows has no unix modes
 		t.Fatalf("mode %v", st.Mode())
 	}
 	if _, err := os.Stat(path + ".lock"); err != nil {
