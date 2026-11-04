@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- **Saved worker connection**, as the CLI: with no `Options.Host`, no `KOSA8_HOST` and no
+  `Options.SocketPath`, the client uses `~/.kosa8/worker.json` (written by `kosa8 wsl setup` on
+  Windows and `kosa8 worker join`): its host, its token unless `Options.Token` is set, and its
+  `insecure` flag. A saved token is never sent to a host from an option or the environment.
+  New `Options.WorkerFile` / `NoWorkerFile`, `Resolve` and `DefaultWorkerFile`; `ResolveEndpoint`
+  is unchanged and does not read the file. On Windows a failed connection to the default socket
+  hints at `kosa8 wsl setup` or `KOSA8_HOST`.
+- `CreateOptions.Mounts`: the host side is checked as a POSIX absolute path on every OS (the
+  daemon's filesystem; WSL2 on Windows), so `/src:/work` is accepted from Windows.
+- **CI**: unit tests on ubuntu, macOS and Windows (`.github/workflows/ci.yml`). The mock daemon's
+  unix socket works on Windows (AF_UNIX); the tests skip it if a runner lacks it.
+- **kosa8 Cloud client**, matching `Kosa8Cloud` in `kosa8` (Python) and `@kosa8/sdk`: `NewCloud`
+  (`CloudOptions`: `APIKey` / `KOSA8_API_KEY`, which must start with `k8c_live_`; `BaseURL` /
+  `KOSA8_CLOUD_URL`, default `https://api.kosa8.cloud`, https only except localhost; `HTTPClient`;
+  `Timeout`, default 120 s). The key is never printed.
+- **Sandboxes**: `Sandboxes.Create` / `List` / `Get`; `CloudSandbox.Exec` (argv), `ExecShell`
+  (`sh -c`), `Sleep`, `Wake`, `Refresh`, `Delete`. `CloudExecResult.WokeMs` is set when a sleeping
+  sandbox woke for the command.
+- **Functions**: `Functions.Deploy` / `List` / `Get` / `Delete` / `Invoke` / `Map`, with typed
+  `CloudInvokeResult` (`Result` is `json.RawMessage`; `DecodeResult`) and `CloudMapResult`.
+- `Cloud.Me`, `Cloud.Usage`.
+- **Errors**: `Error.Code` carries the cloud's stable code and `Message` its sentence. New kinds
+  `KindPaymentRequired` (402, `ErrPaymentRequired`) and `KindRateLimit` (429, `ErrRateLimit`),
+  both also `ErrAPI`; they apply to daemon answers with those statuses too.
+
 ## v0.2.0 — 2026-11-03
 
 The sandbox toolbox, matching `kosa8` (Python) 0.2.0 and the daemon's v0.13.0 routes.

@@ -20,6 +20,9 @@ type Error struct {
 	Stdout        string         // KindStream: output produced before the error
 	Stderr        string
 	Err           error // the underlying cause, if any
+	// Code is kosa8 Cloud's stable error code (payment_required,
+	// quota_exceeded, ...); empty for daemon errors.
+	Code string
 }
 
 // Kind classifies an Error.
@@ -34,6 +37,8 @@ const (
 	KindApprovalRequired Kind = "approval_required" // 403 needing a signed approval
 	KindNotFound         Kind = "not_found"         // 404
 	KindConflict         Kind = "conflict"          // 409
+	KindPaymentRequired  Kind = "payment_required"  // 402: kosa8 Cloud wants a payment method first
+	KindRateLimit        Kind = "rate_limit"        // 429: too many requests, or a quota reached
 	KindUnsupported      Kind = "unsupported"       // 501
 	KindStream           Kind = "stream"            // a stream ended with an error frame
 	KindCheckpoint       Kind = "checkpoint"        // client-side checkpoint bookkeeping
@@ -55,7 +60,7 @@ func (e *Error) Is(target error) bool {
 	}
 	if t.Kind == KindAPI {
 		switch e.Kind {
-		case KindAPI, KindBadRequest, KindAuth, KindPolicy, KindApprovalRequired, KindNotFound, KindConflict, KindUnsupported:
+		case KindAPI, KindBadRequest, KindAuth, KindPolicy, KindApprovalRequired, KindNotFound, KindConflict, KindPaymentRequired, KindRateLimit, KindUnsupported:
 			return true
 		}
 	}
@@ -72,6 +77,8 @@ var (
 	ErrApprovalRequired = &Error{Kind: KindApprovalRequired}
 	ErrNotFound         = &Error{Kind: KindNotFound}
 	ErrConflict         = &Error{Kind: KindConflict}
+	ErrPaymentRequired  = &Error{Kind: KindPaymentRequired}
+	ErrRateLimit        = &Error{Kind: KindRateLimit}
 	ErrUnsupported      = &Error{Kind: KindUnsupported}
 	ErrStream           = &Error{Kind: KindStream}
 	ErrCheckpoint       = &Error{Kind: KindCheckpoint}
@@ -91,7 +98,8 @@ func usage(format string, a ...any) error {
 }
 
 var byStatus = map[int]Kind{
-	400: KindBadRequest, 401: KindAuth, 403: KindPolicy, 404: KindNotFound, 409: KindConflict, 501: KindUnsupported,
+	400: KindBadRequest, 401: KindAuth, 402: KindPaymentRequired, 403: KindPolicy, 404: KindNotFound, 409: KindConflict,
+	429: KindRateLimit, 501: KindUnsupported,
 }
 
 // errorFromResponse builds the typed error for an HTTP error answer. The
