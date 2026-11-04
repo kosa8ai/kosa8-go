@@ -110,6 +110,7 @@ type Frame struct {
 	Error  string `json:"error,omitempty"`
 	Exit   *int   `json:"exit,omitempty"`
 	ID     string `json:"id,omitempty"`
+	Image  string `json:"image,omitempty"` // a template build's final frame
 }
 
 type transport struct {
@@ -267,6 +268,7 @@ type rawFrame struct {
 	Error  string `json:"error,omitempty"`
 	Exit   *int   `json:"exit,omitempty"`
 	ID     string `json:"id,omitempty"`
+	Image  string `json:"image,omitempty"` // a template build's final frame
 }
 
 // frames sends a request whose answer is NDJSON frames and calls fn for each.
@@ -292,7 +294,7 @@ func (t *transport) frames(ctx context.Context, r request, fn func(Frame) error)
 		if err := json.Unmarshal(line, &rf); err != nil {
 			return &Error{Kind: KindStream, Message: fmt.Sprintf("bad frame from %s: %v", r.path, err), Err: err}
 		}
-		f := Frame{Stream: rf.Stream, Done: rf.Done, OK: rf.OK, Error: rf.Error, Exit: rf.Exit, ID: rf.ID}
+		f := Frame{Stream: rf.Stream, Done: rf.Done, OK: rf.OK, Error: rf.Error, Exit: rf.Exit, ID: rf.ID, Image: rf.Image}
 		if rf.Data != "" {
 			if f.Data, err = base64.StdEncoding.DecodeString(rf.Data); err != nil {
 				return &Error{Kind: KindStream, Message: "bad frame data: " + err.Error(), Err: err}
