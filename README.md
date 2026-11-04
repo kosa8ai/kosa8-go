@@ -89,7 +89,7 @@ and `CreateOptions.AutoStopMin` / `TTLMin` / `AutoDeleteMin` / `Ephemeral`. Temp
 
 The same sandboxes on kosa8 Cloud instead of the local daemon. Make an API
 key in the cloud dashboard and set `KOSA8_API_KEY` (and `KOSA8_CLOUD_URL` to
-point somewhere other than `https://api.kosa8.cloud`).
+point somewhere other than `https://api.kosa8.com`).
 
 ```go
 cloud, _ := kosa8.NewCloud(kosa8.CloudOptions{}) // or CloudOptions{APIKey: "k8c_live_..."}
