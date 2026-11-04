@@ -27,7 +27,7 @@ import (
 )
 
 // Version of this SDK.
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 // Options configures a Client. The zero value talks to the local daemon.
 type Options struct {

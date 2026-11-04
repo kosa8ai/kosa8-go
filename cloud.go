@@ -29,7 +29,7 @@ import (
 )
 
 // DefaultCloudURL is the kosa8 Cloud control plane.
-const DefaultCloudURL = "https://api.kosa8.cloud"
+const DefaultCloudURL = "https://api.kosa8.com"
 
 // CloudKeyPrefix starts every kosa8 Cloud API key.
 const CloudKeyPrefix = "k8c_live_"
