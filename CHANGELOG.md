@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 — 2026-11-03
+
+kosa8 Cloud's API (api.kosa8.cloud) is not open yet; the `Kosa8Cloud` client is ready for when it is.
 
 - **Saved worker connection**, as the CLI: with no `Options.Host`, no `KOSA8_HOST` and no
   `Options.SocketPath`, the client uses `~/.kosa8/worker.json` (written by `kosa8 wsl setup` on
