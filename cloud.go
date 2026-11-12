@@ -4,14 +4,15 @@ package kosa8
 // bring-your-own-cloud) instead of the local daemon.
 //
 //	cloud, _ := kosa8.NewCloud(kosa8.CloudOptions{}) // KOSA8_API_KEY from the environment
-//	box, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Template: "python"})
+//	box, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Template: "python", TTLSeconds: 3600})
 //	r, _ := box.Exec(ctx, []string{"python3", "-c", "print(6 * 7)"}, nil)
 //	fmt.Print(r.Stdout) // 42
 //	_ = box.Delete(ctx)
 //
 // Authentication is an API key (k8c_live_...) made in the cloud dashboard.
 // Errors are the SDK's usual *Error; each carries the cloud's stable Code
-// (for example payment_required, quota_exceeded).
+// (for example payment_required, quota_exceeded); see ErrPaymentRequired,
+// ErrOrgFrozen, ErrRateLimit, ErrExecTimeout and ErrUnsupported.
 
 import (
 	"bytes"
@@ -24,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -133,43 +135,44 @@ func (c *Cloud) Usage(ctx context.Context) (Info, error) {
 	return out, c.request(ctx, "GET", "/v1/usage", nil, &out)
 }
 
+// Templates lists the templates the org can create sandboxes from now.
+func (c *Cloud) Templates(ctx context.Context) ([]CloudTemplate, error) {
+	var r struct {
+		Templates []CloudTemplate `json:"templates"`
+	}
+	if err := c.request(ctx, "GET", "/v1/templates", nil, &r); err != nil {
+		return nil, err
+	}
+	return r.Templates, nil
+}
+
+// CloudTemplate is a template a cloud sandbox can start from.
+type CloudTemplate struct {
+	Key     string   `json:"key"`
+	CPUs    float64  `json:"cpus"`
+	MemMB   int      `json:"mem_mb"`
+	Image   string   `json:"image"`
+	Regions []string `json:"regions"`
+	Hosts   int      `json:"hosts"`
+	Warm    int      `json:"warm"`
+	OwnHost bool     `json:"own_host"`
+}
+
+// request sends a JSON body (or none) and decodes a JSON answer into out.
 func (c *Cloud) request(ctx context.Context, method, path string, body, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
 	var rd io.Reader
+	ct := ""
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return usage("encode request: %v", err)
 		}
 		rd = bytes.NewReader(b)
+		ct = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rd)
+	b, err := c.do(ctx, method, path, ct, rd, "application/json")
 	if err != nil {
-		return usage("build request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return &Error{Kind: KindTimeout, Message: fmt.Sprintf("kosa8 Cloud did not answer %s %s in time", method, path), Method: method, Path: path, Err: err}
-		}
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		return &Error{Kind: KindConnection, Message: fmt.Sprintf("could not reach kosa8 Cloud at %s: %v", c.baseURL, err), Method: method, Path: path, Err: err}
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &Error{Kind: KindConnection, Message: fmt.Sprintf("read %s %s: %v", method, path, err), Method: method, Path: path, Err: err}
-	}
-	if resp.StatusCode >= 400 {
-		return cloudError(resp.StatusCode, decodeBody(b), method, path)
+		return err
 	}
 	if out == nil || len(bytes.TrimSpace(b)) == 0 {
 		return nil
@@ -180,53 +183,195 @@ func (c *Cloud) request(ctx context.Context, method, path string, body, out any)
 	return nil
 }
 
-// cloudError reads the cloud's {error: code, message}: the sentence becomes
-// the message and the code is kept.
+// do sends one request and returns the answer's body; an HTTP error answer
+// becomes a typed *Error.
+func (c *Cloud) do(ctx context.Context, method, path, contentType string, body io.Reader, accept string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return nil, usage("build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.key)
+	req.Header.Set("Accept", accept)
+	req.Header.Set("User-Agent", UserAgent)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, &Error{Kind: KindTimeout, Message: fmt.Sprintf("kosa8 Cloud did not answer %s %s in time", method, path), Method: method, Path: path, Err: err}
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
+		return nil, &Error{Kind: KindConnection, Message: fmt.Sprintf("could not reach kosa8 Cloud at %s: %v", c.baseURL, err), Method: method, Path: path, Err: err}
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &Error{Kind: KindConnection, Message: fmt.Sprintf("read %s %s: %v", method, path, err), Method: method, Path: path, Err: err}
+	}
+	if resp.StatusCode >= 400 {
+		e := cloudError(resp.StatusCode, decodeBody(b), method, path)
+		e.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return nil, e
+	}
+	return b, nil
+}
+
+// parseRetryAfter reads a Retry-After header: seconds, or an HTTP date.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n < 0 {
+			return 0
+		}
+		return time.Duration(n) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d.Round(time.Second)
+		}
+	}
+	return 0
+}
+
+// execTimeoutHint is added to the cloud's own words when an exec is cut off.
+const execTimeoutHint = "kosa8 Cloud cuts a buffered exec off after about 30 s; run long jobs in the background " +
+	"(nohup cmd > /workspace/job.log 2>&1 &) and poll /workspace for the result"
+
+// cloudError reads the cloud's {error: code, message, upgrade_url?,
+// agent_message?}: the sentence becomes the message and the code is kept.
 func cloudError(status int, body any, method, path string) *Error {
 	msgBody := body
-	code := ""
+	code, upgrade, agent := "", "", ""
 	if m, ok := body.(map[string]any); ok {
 		code, _ = m["error"].(string)
 		msg, _ := m["message"].(string)
 		if msg == "" {
 			msg = code
 		}
+		upgrade, _ = m["upgrade_url"].(string)
+		agent, _ = m["agent_message"].(string)
 		msgBody = map[string]any{"error": msg}
 	}
 	e := errorFromResponse(status, msgBody, method, path)
 	e.Code = code
 	e.Body = body
+	e.UpgradeURL = upgrade
+	e.AgentMessage = agent
+	switch {
+	case status == 423 || code == "org_frozen":
+		e.Kind = KindOrgFrozen
+	case isExecTimeout(status, code, path, e.Message):
+		e.Kind = KindExecTimeout
+		e.Message += " (" + execTimeoutHint + ")"
+	}
 	return e
 }
 
-// CloudSandboxInfo is a cloud sandbox as the control plane reports it.
-type CloudSandboxInfo struct {
-	ID         string  `json:"id"`
-	State      string  `json:"state"` // creating | running | sleeping | stopped | deleted | error
-	Template   string  `json:"template"`
-	CPUs       float64 `json:"cpus"`
-	MemMB      int     `json:"mem_mb"`
-	Source     *string `json:"source"` // pool | restore | cold
-	Region     *string `json:"region"`
-	OwnHost    bool    `json:"own_host"`
-	CreatedAt  int64   `json:"created_at"`
-	StartedAt  *int64  `json:"started_at"`
-	StoppedAt  *int64  `json:"stopped_at"`
-	DeletedAt  *int64  `json:"deleted_at"`
-	LastError  *string `json:"last_error"`
-	RunningS   int64   `json:"running_s"`
-	AsleepS    int64   `json:"asleep_s"`
-	SleepBytes int64   `json:"sleep_bytes"`
-	CostUSD    float64 `json:"cost_usd"`
+func isExecTimeout(status int, code, path, msg string) bool {
+	if status == 504 || code == "exec_timeout" {
+		return true
+	}
+	p := path
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		p = p[:i]
+	}
+	return status == 502 && code == "host_failed" && strings.HasSuffix(p, "/exec") && strings.Contains(strings.ToLower(msg), "timed out")
 }
 
+// CloudSandboxInfo is a cloud sandbox as the control plane reports it (the
+// OpenAPI Sandbox schema). Nullable fields are pointers.
+type CloudSandboxInfo struct {
+	ID string `json:"id"`
+	// State: creating | running | paused | sleeping | stopped | error |
+	// deleted | host_removed | host_lost
+	State    string `json:"state"`
+	Template string `json:"template"`
+	// OriginItemVersion is the kosa8 Store version it was started (or
+	// forked) from.
+	OriginItemVersion *string `json:"origin_item_version"`
+	CPUs              float64 `json:"cpus"`
+	MemMB             int     `json:"mem_mb"`
+	Source            *string `json:"source"`    // pool | restore | cold | fork
+	ParentID          *string `json:"parent_id"` // the sandbox it was forked from
+	Region            *string `json:"region"`
+	OwnHost           bool    `json:"own_host"`
+	CreatedAt         int64   `json:"created_at"` // Unix ms
+	StartedAt         *int64  `json:"started_at"`
+	StoppedAt         *int64  `json:"stopped_at"`
+	DeletedAt         *int64  `json:"deleted_at"`
+	DeleteAfter       *int64  `json:"delete_after"`  // Unix ms: deleted automatically then
+	SleepAfterS       *int    `json:"sleep_after_s"` // idle seconds before it sleeps; 0 never
+	LastError         *string `json:"last_error"`
+	HostUnreachable   bool    `json:"host_unreachable"`
+	RunningS          int64   `json:"running_s"`
+	AsleepS           int64   `json:"asleep_s"`
+	SleepBytes        int64   `json:"sleep_bytes"`
+	CostUSD           float64 `json:"cost_usd"` // estimate so far
+}
+
+// Limits the Cloud API checks; the SDK checks them first.
+const (
+	CloudMaxSleepAfterS = 604800  // 7 days
+	CloudMinTTLSeconds  = 60      // 1 minute
+	CloudMaxTTLSeconds  = 7776000 // 90 days
+	CloudMaxForks       = 100
+	CloudMaxLabelLen    = 200
+)
+
 // CloudCreateOptions are the settings for a new cloud sandbox; zero values
-// take the org's defaults.
+// take the org's defaults and are not sent.
 type CloudCreateOptions struct {
-	Template string // base, python, node, ...
+	// Template is a key from Cloud.Templates (base, python, node, ...) or a
+	// kosa8 Store item: creator/name or creator/name@1.2.3.
+	Template string
 	Region   string // such as eu-hel1
-	// SleepAfterS is idle seconds before the sandbox sleeps; Ptr(0) never.
+	// SleepAfterS is idle seconds before the sandbox sleeps (0..604800);
+	// Ptr(0) never.
 	SleepAfterS *int
+	// TTLSeconds deletes the sandbox this many seconds from now
+	// (60..7776000). 0 means no lifetime.
+	TTLSeconds int
+	// DeleteAfter deletes the sandbox at this Unix time in milliseconds. 0
+	// means none. Set TTLSeconds or DeleteAfter, not both.
+	DeleteAfter int64
+	// AcceptPrice is a paid Store item's current price in USD, which the
+	// person agreed to. Without it a paid item answers 402
+	// price_not_accepted; a different price answers 409 price_changed.
+	AcceptPrice *float64
+}
+
+func checkSleepAfter(v *int) error {
+	if v != nil && (*v < 0 || *v > CloudMaxSleepAfterS) {
+		return usage("SleepAfterS must be 0..%d seconds, not %d", CloudMaxSleepAfterS, *v)
+	}
+	return nil
+}
+
+func lifetimeBody(body map[string]any, ttl int, deleteAfter int64) error {
+	if ttl != 0 && deleteAfter != 0 {
+		return usage("set TTLSeconds or DeleteAfter, not both")
+	}
+	if ttl != 0 {
+		if ttl < CloudMinTTLSeconds || ttl > CloudMaxTTLSeconds {
+			return usage("TTLSeconds must be %d..%d seconds, not %d", CloudMinTTLSeconds, CloudMaxTTLSeconds, ttl)
+		}
+		body["ttl_s"] = ttl
+	}
+	if deleteAfter < 0 {
+		return usage("DeleteAfter must be a Unix time in milliseconds, not %d", deleteAfter)
+	}
+	if deleteAfter != 0 {
+		body["delete_after"] = deleteAfter
+	}
+	return nil
 }
 
 // CloudSandboxes creates and finds cloud sandboxes.
@@ -236,7 +381,8 @@ type sandboxEnvelope struct {
 	Sandbox CloudSandboxInfo `json:"sandbox"`
 }
 
-// Create starts a sandbox; it returns once the sandbox is running.
+// Create starts a sandbox; it returns once the sandbox is running. Bad
+// TTLSeconds, DeleteAfter or SleepAfterS are refused before any request.
 func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*CloudSandbox, error) {
 	body := map[string]any{}
 	if o.Template != "" {
@@ -245,8 +391,17 @@ func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*Clo
 	if o.Region != "" {
 		body["region"] = o.Region
 	}
+	if err := checkSleepAfter(o.SleepAfterS); err != nil {
+		return nil, err
+	}
 	if o.SleepAfterS != nil {
 		body["sleep_after_s"] = *o.SleepAfterS
+	}
+	if err := lifetimeBody(body, o.TTLSeconds, o.DeleteAfter); err != nil {
+		return nil, err
+	}
+	if o.AcceptPrice != nil {
+		body["accept_price"] = *o.AcceptPrice
 	}
 	var r sandboxEnvelope
 	if err := s.c.request(ctx, "POST", "/v1/sandboxes", body, &r); err != nil {
@@ -255,23 +410,85 @@ func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*Clo
 	return &CloudSandbox{c: s.c, Info: r.Sandbox}, nil
 }
 
-// List returns the org's sandboxes; with all, deleted ones too.
+// List returns the org's sandboxes; with all, deleted ones too. It returns
+// the first page only once the Cloud API pages its answer; ListAll follows
+// every page.
 func (s *CloudSandboxes) List(ctx context.Context, all bool) ([]*CloudSandbox, error) {
-	p := "/v1/sandboxes"
-	if all {
-		p += "?all=1"
-	}
-	var r struct {
-		Sandboxes []CloudSandboxInfo `json:"sandboxes"`
-	}
-	if err := s.c.request(ctx, "GET", p, nil, &r); err != nil {
+	p, err := s.ListPage(ctx, CloudListOptions{All: all})
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*CloudSandbox, 0, len(r.Sandboxes))
+	return p.Sandboxes, nil
+}
+
+// CloudListOptions select a page of sandboxes.
+type CloudListOptions struct {
+	All    bool   // include deleted sandboxes
+	Limit  int    // page size; 0 the server's default
+	Cursor string // a page's NextCursor; "" the first page
+}
+
+// CloudSandboxPage is one page of sandboxes.
+type CloudSandboxPage struct {
+	Sandboxes []*CloudSandbox
+	// NextCursor asks for the next page; "" when this is the last. Servers
+	// that do not page their answer yet never send one.
+	NextCursor string
+}
+
+// ListPage returns one page of the org's sandboxes.
+func (s *CloudSandboxes) ListPage(ctx context.Context, o CloudListOptions) (CloudSandboxPage, error) {
+	if o.Limit < 0 {
+		return CloudSandboxPage{}, usage("Limit must not be negative")
+	}
+	q := url.Values{}
+	if o.All {
+		q.Set("all", "1")
+	}
+	if o.Limit > 0 {
+		q.Set("limit", strconv.Itoa(o.Limit))
+	}
+	if o.Cursor != "" {
+		q.Set("cursor", o.Cursor)
+	}
+	p := "/v1/sandboxes"
+	if len(q) > 0 {
+		p += "?" + q.Encode()
+	}
+	var r struct {
+		Sandboxes  []CloudSandboxInfo `json:"sandboxes"`
+		NextCursor *string            `json:"next_cursor"`
+	}
+	if err := s.c.request(ctx, "GET", p, nil, &r); err != nil {
+		return CloudSandboxPage{}, err
+	}
+	out := CloudSandboxPage{Sandboxes: make([]*CloudSandbox, 0, len(r.Sandboxes))}
 	for _, i := range r.Sandboxes {
-		out = append(out, &CloudSandbox{c: s.c, Info: i})
+		out.Sandboxes = append(out.Sandboxes, &CloudSandbox{c: s.c, Info: i})
+	}
+	if r.NextCursor != nil {
+		out.NextCursor = *r.NextCursor
 	}
 	return out, nil
+}
+
+// ListAll follows NextCursor from o.Cursor until the last page and returns
+// every sandbox. It stops if the server hands back a cursor it already gave.
+func (s *CloudSandboxes) ListAll(ctx context.Context, o CloudListOptions) ([]*CloudSandbox, error) {
+	var out []*CloudSandbox
+	seen := map[string]bool{}
+	for {
+		p, err := s.ListPage(ctx, o)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p.Sandboxes...)
+		if p.NextCursor == "" || seen[p.NextCursor] || p.NextCursor == o.Cursor {
+			return out, nil
+		}
+		seen[p.NextCursor] = true
+		o.Cursor = p.NextCursor
+	}
 }
 
 // Get returns one sandbox by id.
@@ -321,6 +538,13 @@ type CloudExecResult struct {
 func (r CloudExecResult) OK() bool { return r.ExitCode != nil && *r.ExitCode == 0 }
 
 // Exec runs argv and waits for it. A sleeping sandbox wakes for it.
+//
+// Each exec runs in a fresh container; only /workspace persists between
+// calls. The Cloud API cuts a buffered exec off after about 30 s (that is
+// ErrExecTimeout): run long jobs in the background (nohup ... & writing to
+// /workspace) and poll. The request body is capped at 64 KiB (413
+// too_large). ExitCode is nil when the cloud reports no exit status, so
+// check it (or use OK) before dereferencing.
 func (b *CloudSandbox) Exec(ctx context.Context, argv []string, o *CloudExecOptions) (CloudExecResult, error) {
 	if len(argv) == 0 {
 		return CloudExecResult{}, usage("Exec needs a command")
@@ -379,6 +603,53 @@ func (b *CloudSandbox) Wake(ctx context.Context) error { return b.update(ctx, "P
 
 // Refresh reloads Info.
 func (b *CloudSandbox) Refresh(ctx context.Context) error { return b.update(ctx, "GET", "") }
+
+// CloudUpdateOptions change a sandbox's lifetime or sleep timer. Zero values
+// are not sent.
+type CloudUpdateOptions struct {
+	// TTLSeconds deletes the sandbox this many seconds from now (60..7776000).
+	TTLSeconds int
+	// DeleteAfter deletes the sandbox at this Unix time in milliseconds.
+	DeleteAfter int64
+	// ClearLifetime removes any lifetime, so the sandbox is never deleted
+	// automatically (sends "ttl_s": null). Not with TTLSeconds or DeleteAfter.
+	ClearLifetime bool
+	// SleepAfterS is idle seconds before it sleeps (0..604800); Ptr(0) never.
+	SleepAfterS *int
+}
+
+// Update changes the sandbox's lifetime or sleep timer (PATCH) and refreshes
+// Info. It returns the server's notes, if any.
+func (b *CloudSandbox) Update(ctx context.Context, o CloudUpdateOptions) ([]string, error) {
+	body := map[string]any{}
+	if o.ClearLifetime && (o.TTLSeconds != 0 || o.DeleteAfter != 0) {
+		return nil, usage("ClearLifetime cannot be combined with TTLSeconds or DeleteAfter")
+	}
+	if err := lifetimeBody(body, o.TTLSeconds, o.DeleteAfter); err != nil {
+		return nil, err
+	}
+	if o.ClearLifetime {
+		body["ttl_s"] = nil
+	}
+	if err := checkSleepAfter(o.SleepAfterS); err != nil {
+		return nil, err
+	}
+	if o.SleepAfterS != nil {
+		body["sleep_after_s"] = *o.SleepAfterS
+	}
+	if len(body) == 0 {
+		return nil, usage("Update needs TTLSeconds, DeleteAfter, ClearLifetime or SleepAfterS")
+	}
+	var r struct {
+		Sandbox CloudSandboxInfo `json:"sandbox"`
+		Notes   []string         `json:"notes"`
+	}
+	if err := b.c.request(ctx, "PATCH", b.path(""), body, &r); err != nil {
+		return nil, err
+	}
+	b.Info = r.Sandbox
+	return r.Notes, nil
+}
 
 // Delete deletes the sandbox.
 func (b *CloudSandbox) Delete(ctx context.Context) error {
