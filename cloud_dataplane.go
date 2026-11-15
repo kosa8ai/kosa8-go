@@ -24,7 +24,7 @@ type CloudFileInfo struct {
 	Path    string `json:"path"`
 	Type    string `json:"type"` // file | dir
 	Size    int64  `json:"size"`
-	Mode    string `json:"mode"`
+	Mode    uint32 `json:"mode"` // Unix permission bits, as the host sends them
 	ModTime string `json:"mod_time"`
 }
 

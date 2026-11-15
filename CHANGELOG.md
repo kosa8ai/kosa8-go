@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (on top of 0.4.0)
+
+The rest of the kosa8 Cloud API:
+
+- **Sized and Docker creates**: `CloudCreateOptions` `Size`, `CPUs`/`MemMB`, `Image`, `DiskGB`,
+  `Persistent`, `Docker`, `CPU` (`dedicated`), `Name`, `Labels`, `Env`, `Secrets`, `Egress`,
+  `Snapshot`, `NoWait`; a cold boot (202 `creating`) is waited for with the new `WaitRunning`.
+  Checked before any request. `CloudSandboxInfo` gains `SnapshotID`, `Persistent`, `Name`,
+  `Image`, `DiskGB`, `CPU`, `Labels`; `CloudListOptions` gains `Name` and `Labels`.
+- **Background commands**: `ExecBackground`, `BackgroundExec`, `WaitBackground`.
+- **Durable snapshots**: `CloudSandbox.Snapshot`, `Cloud.Snapshots` (`List`, `Get`, `Delete`).
+- **Previews** (`Previews()`: `Create`, `List`, `Link`, `Rotate`, `Delete`), **terminal** URLs.
+- **Files**: streamed `Download`/`Upload` (`/files/raw`, no 8 MiB cap) and presigned `Link`.
+  Fix: `CloudFileInfo.Mode` is now `uint32`; the API sends a number, so `Write` and `List`
+  failed to decode on live hosts.
+- **Egress**, **secrets** (`Cloud.Secrets`, values never printed by `%#v`), **schedules**,
+  **code interpreter** (`RunCode`, contexts), `Metrics`, `Logs`, `SetLabels`,
+  `Cloud.Capabilities`, `Cloud.EgressPresets`.
+- **Pipelines** (`Cloud.Pipelines`): `Run`, `Runs`, `Get`, `Wait`, `Logs`, `Cancel`,
+  `Artifacts`, `DownloadArtifact`, `CreateHook`, `Hooks`, `DeleteHook`.
+
 ## 0.4.0 — 2026-11-12
 
 kosa8 Cloud parity with the Python SDK. The default Cloud address is `https://api.kosa8.com`
