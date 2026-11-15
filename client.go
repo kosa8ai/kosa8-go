@@ -27,7 +27,10 @@ import (
 )
 
 // Version of this SDK.
-const Version = "0.3.1"
+const Version = "0.4.0"
+
+// UserAgent is sent with every kosa8 Cloud request.
+const UserAgent = "kosa8-go/" + Version
 
 // Options configures a Client. The zero value talks to the local daemon.
 type Options struct {

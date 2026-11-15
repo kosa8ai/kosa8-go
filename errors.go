@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Error is every error this package returns. Kind says which; the daemon's own
@@ -23,6 +24,15 @@ type Error struct {
 	// Code is kosa8 Cloud's stable error code (payment_required,
 	// quota_exceeded, ...); empty for daemon errors.
 	Code string
+	// UpgradeURL is where a person adds a payment method or credit; kosa8
+	// Cloud sends it with a 402. Empty when absent.
+	UpgradeURL string
+	// AgentMessage is a sentence an AI agent should relay to its person word
+	// for word; kosa8 Cloud sends it with a 402. Empty when absent.
+	AgentMessage string
+	// RetryAfter is the server's Retry-After header (a 429, usually); zero
+	// when it sent none.
+	RetryAfter time.Duration
 }
 
 // Kind classifies an Error.
@@ -39,7 +49,9 @@ const (
 	KindConflict         Kind = "conflict"          // 409
 	KindPaymentRequired  Kind = "payment_required"  // 402: kosa8 Cloud wants a payment method first
 	KindRateLimit        Kind = "rate_limit"        // 429: too many requests, or a quota reached
-	KindUnsupported      Kind = "unsupported"       // 501
+	KindUnsupported      Kind = "unsupported"       // 501: not_available / not_supported
+	KindOrgFrozen        Kind = "org_frozen"        // 423: the org is frozen in the Security Center
+	KindExecTimeout      Kind = "exec_timeout"      // a kosa8 Cloud exec ran past the ~30 s limit
 	KindStream           Kind = "stream"            // a stream ended with an error frame
 	KindCheckpoint       Kind = "checkpoint"        // client-side checkpoint bookkeeping
 	KindTimeout          Kind = "timeout"
@@ -58,9 +70,12 @@ func (e *Error) Is(target error) bool {
 	if t.Kind == KindPolicy && e.Kind == KindApprovalRequired {
 		return true // an approval refusal is a policy refusal
 	}
+	if t.Kind == KindTimeout && e.Kind == KindExecTimeout {
+		return true // an exec cut off by the cloud is a timeout too
+	}
 	if t.Kind == KindAPI {
 		switch e.Kind {
-		case KindAPI, KindBadRequest, KindAuth, KindPolicy, KindApprovalRequired, KindNotFound, KindConflict, KindPaymentRequired, KindRateLimit, KindUnsupported:
+		case KindAPI, KindBadRequest, KindAuth, KindPolicy, KindApprovalRequired, KindNotFound, KindConflict, KindPaymentRequired, KindRateLimit, KindUnsupported, KindOrgFrozen, KindExecTimeout:
 			return true
 		}
 	}
@@ -80,10 +95,18 @@ var (
 	ErrPaymentRequired  = &Error{Kind: KindPaymentRequired}
 	ErrRateLimit        = &Error{Kind: KindRateLimit}
 	ErrUnsupported      = &Error{Kind: KindUnsupported}
-	ErrStream           = &Error{Kind: KindStream}
-	ErrCheckpoint       = &Error{Kind: KindCheckpoint}
-	ErrTimeout          = &Error{Kind: KindTimeout}
-	ErrUsage            = &Error{Kind: KindUsage}
+	// ErrOrgFrozen: kosa8 Cloud answered 423 org_frozen. An owner or admin
+	// froze the organization in the Security Center and must unfreeze it.
+	ErrOrgFrozen = &Error{Kind: KindOrgFrozen}
+	// ErrExecTimeout: a kosa8 Cloud exec was cut off (504, code exec_timeout,
+	// or a 502 host_failed on /exec that says "timed out"). A buffered exec
+	// gets about 30 s; run long jobs in the background and poll. Also
+	// matches ErrTimeout and ErrAPI.
+	ErrExecTimeout = &Error{Kind: KindExecTimeout}
+	ErrStream      = &Error{Kind: KindStream}
+	ErrCheckpoint  = &Error{Kind: KindCheckpoint}
+	ErrTimeout     = &Error{Kind: KindTimeout}
+	ErrUsage       = &Error{Kind: KindUsage}
 )
 
 // AsError returns err as *Error, if it is one.

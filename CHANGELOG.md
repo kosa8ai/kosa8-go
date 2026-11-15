@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased (on top of 0.4.0)
+
+The rest of the kosa8 Cloud API:
+
+- **Sized and Docker creates**: `CloudCreateOptions` `Size`, `CPUs`/`MemMB`, `Image`, `DiskGB`,
+  `Persistent`, `Docker`, `CPU` (`dedicated`), `Name`, `Labels`, `Env`, `Secrets`, `Egress`,
+  `Snapshot`, `NoWait`; a cold boot (202 `creating`) is waited for with the new `WaitRunning`.
+  Checked before any request. `CloudSandboxInfo` gains `SnapshotID`, `Persistent`, `Name`,
+  `Image`, `DiskGB`, `CPU`, `Labels`; `CloudListOptions` gains `Name` and `Labels`.
+- **Background commands**: `ExecBackground`, `BackgroundExec`, `WaitBackground`.
+- **Durable snapshots**: `CloudSandbox.Snapshot`, `Cloud.Snapshots` (`List`, `Get`, `Delete`).
+- **Previews** (`Previews()`: `Create`, `List`, `Link`, `Rotate`, `Delete`), **terminal** URLs.
+- **Files**: streamed `Download`/`Upload` (`/files/raw`, no 8 MiB cap) and presigned `Link`.
+  Fix: `CloudFileInfo.Mode` is now `uint32`; the API sends a number, so `Write` and `List`
+  failed to decode on live hosts.
+- **Egress**, **secrets** (`Cloud.Secrets`, values never printed by `%#v`), **schedules**,
+  **code interpreter** (`RunCode`, contexts), `Metrics`, `Logs`, `SetLabels`,
+  `Cloud.Capabilities`, `Cloud.EgressPresets`.
+- **Pipelines** (`Cloud.Pipelines`): `Run`, `Runs`, `Get`, `Wait`, `Logs`, `Cancel`,
+  `Artifacts`, `DownloadArtifact`, `CreateHook`, `Hooks`, `DeleteHook`.
+
+## 0.4.0 — 2026-11-12
+
+kosa8 Cloud parity with the Python SDK. The default Cloud address is `https://api.kosa8.com`
+(0.3.0 defaulted to `api.kosa8.cloud`; do not use 0.3.0). `KOSA8_CLOUD_URL` still overrides it.
+
+- **Sandbox lifetime**: `CloudCreateOptions.TTLSeconds` (60..7776000), `DeleteAfter` (Unix ms;
+  not with `TTLSeconds`) and `AcceptPrice` (paid kosa8 Store items), checked before any request;
+  `SleepAfterS` is checked against 0..604800. Only fields you set are sent.
+- **`CloudSandbox.Update`** (`PATCH /v1/sandboxes/{id}`) with `CloudUpdateOptions`: `TTLSeconds`,
+  `DeleteAfter`, `SleepAfterS`, or `ClearLifetime` (sends `"ttl_s": null`). Refreshes `Info` and
+  returns the server's notes.
+- **Paging**: `Sandboxes.ListPage` (`CloudListOptions{All, Limit, Cursor}` -> `CloudSandboxPage`
+  with `NextCursor`, `""` when the server sends none) and `Sandboxes.ListAll`, which follows
+  `NextCursor` and stops if a cursor repeats. `List(ctx, all)` is unchanged.
+- **Files** (`CloudSandbox.Files()`): `Read` (raw `[]byte`), `ReadText`, `Write` (raw bytes,
+  `application/octet-stream`, up to 8 MiB), `WriteString`, `List` (default `/workspace`), `Mkdir`,
+  `Delete` (recursive). Paths are URL-encoded.
+- **Checkpoints, rewind, fork, ports**: `CloudSandbox.Checkpoint` (label up to 200 characters),
+  `Checkpoints`, `Rewind` (returns the checkpoint and the automatic backup; refreshes `Info`),
+  `Fork` (1..100 new `*CloudSandbox`), `Ports`. These and the file methods need the host's data
+  plane; hosts without it answer 501 (`ErrUnsupported`).
+- **Templates**: `Cloud.Templates` -> `[]CloudTemplate`.
+- **`CloudSandboxInfo`** now has every field of the API's Sandbox schema: `OriginItemVersion`,
+  `ParentID`, `DeleteAfter`, `SleepAfterS`, `HostUnreachable` (and `Source` may be `fork`).
+- **Errors**: `Error.UpgradeURL` and `Error.AgentMessage` (sent with a 402); `Error.RetryAfter`
+  from a `Retry-After` header; new `ErrOrgFrozen` (423 `org_frozen`) and `ErrExecTimeout` (504,
+  code `exec_timeout`, or a 502 `host_failed` on `/exec` saying "timed out"; also matches
+  `ErrTimeout`), whose message keeps the server's words and adds the 30 s limit and the
+  background-job workaround. 501 `not_available` / `not_supported` stays `ErrUnsupported`.
+- Cloud requests send `User-Agent: kosa8-go/0.4.0` (`kosa8.UserAgent`); `Version` is `0.4.0`.
+- **Docs**: the README leads with a kosa8 Cloud quickstart, documents the base template (Alpine,
+  busybox `sh`, only `/workspace` persists, 30 s exec limit, 64 KiB body, 8 MiB files) and the
+  Cloud errors, and no longer dereferences a possibly nil `ExitCode`. The snippets compile as
+  examples in `example_test.go`.
+
 ## v0.3.1 — 2026-11-03
 
 - The default kosa8 Cloud address is now `https://api.kosa8.com` (0.3.0 defaulted to `api.kosa8.cloud`, which kosa8 Cloud does not use). `KOSA8_CLOUD_URL` still overrides it.
