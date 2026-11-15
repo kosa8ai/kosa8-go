@@ -96,6 +96,70 @@ These need the host's data plane. On hosts without it the API answers 501 (`not_
 `not_supported`), which is `errors.Is(err, kosa8.ErrUnsupported)`. Not every kosa8 Cloud host has
 it yet.
 
+### Sized and Docker sandboxes, env, snapshots
+
+```go
+box, err := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{
+	Size:   "4x8", // 2x4, 4x8, 8x16, 16x32; or CPUs + MemMB
+	Image:  "kosa8-template/universal-24.04-20261115.2",
+	Docker: true, // run dockerd inside; implies Persistent
+	Env:    map[string]string{"NODE_ENV": "production"},
+	Name:   "web", Labels: map[string]string{"team": "a"},
+	TTLSeconds: 3600,
+}) // a sized create boots cold; Create waits until it runs (NoWait: true to skip)
+
+snap, _ := box.Snapshot(ctx, "warm")                       // durable: kept until deleted
+clone, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Snapshot: snap.ID})
+_ = cloud.Snapshots.Delete(ctx, snap.ID)                   // also List, Get
+```
+
+Also `DiskGB`, `Persistent`, `CPU: "dedicated"`, `Region` (`us`, `eu` or a region id), `Secrets`
+(names) and `Egress`. `CloudListOptions` takes `Name` and `Labels`.
+
+### Background commands, previews, terminal
+
+```go
+job, _ := box.ExecBackground(ctx, []string{"sh", "-c", "npm run build"}, nil) // no 30 s limit
+job, _ = box.WaitBackground(ctx, job.ID, 0)                                   // or BackgroundExec to poll once
+fmt.Println(*job.ExitCode, *job.Output)
+
+p, _ := box.Previews().Create(ctx, 3000, nil) // private signed URL on kosa8labs.com; Public: true for none
+fmt.Println(p.URL)                            // also List, Link, Rotate, Delete
+
+t, _ := box.Terminal(ctx, &kosa8.CloudTerminalOptions{Cols: 120, Rows: 40}) // a wss:// PTY URL
+```
+
+### More of the sandbox
+
+- Files: `Files().Download(ctx, path, w)` / `Upload(ctx, path, r)` stream any size;
+  `Files().Link(ctx, path, "GET"|"PUT", ttlS)` is a presigned URL straight to the host.
+- `Egress`, `SetEgress(ctx, kosa8.CloudEgress{Presets: []string{"pypi"}})`, `ResetEgress`;
+  `Cloud.EgressPresets`.
+- `RunCode(ctx, "import pandas", &kosa8.CloudCodeOptions{Context: "a"})` (a stateful Python
+  interpreter; needs a persistent sandbox with python3), `CodeContexts`, `CreateCodeContext`,
+  `ResetCodeContext`, `DeleteCodeContext`.
+- `Schedules().Create(ctx, kosa8.CloudScheduleSpec{Cron: "0 * * * *", Cmd: argv})`, `List`, `Run`,
+  `Delete`.
+- `Metrics`, `Logs(ctx, limit)`, `SetLabels`, `Secrets` (names it holds); `Cloud.Capabilities`.
+
+### Secrets and Pipelines
+
+```go
+// Read the value from a file or stdin, never from argv or code.
+_, _, err = cloud.Secrets.Set(ctx, "npm-token", kosa8.CloudSecretSpec{
+	Value: value, Upstream: "https://registry.npmjs.org", Pipelines: true,
+}) // also List, Delete
+
+run, _ := cloud.Pipelines.Run(ctx, kosa8.CloudPipelineRunOptions{
+	RepoURL: "https://github.com/me/app", Ref: "main", Secrets: []string{"npm-token"},
+})
+run, _ = cloud.Pipelines.Wait(ctx, run.ID, 0) // success | failure | cancelled | ...
+logs, _ := cloud.Pipelines.Logs(ctx, run.ID, "", -1)
+```
+
+Also `Runs`, `Get`, `Cancel`, `Artifacts`, `DownloadArtifact`, `CreateHook` (webhook URL and
+optional cron), `Hooks`, `DeleteHook`.
+
 ### Functions
 
 ```go

@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +48,9 @@ type CloudOptions struct {
 type Cloud struct {
 	Sandboxes *CloudSandboxes
 	Functions *CloudFunctions
+	Snapshots *CloudSnapshots // durable snapshots
+	Secrets   *CloudSecrets   // the org's secrets
+	Pipelines *CloudPipelines // CI runs and hooks
 
 	baseURL string
 	key     string
@@ -110,6 +112,9 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	c := &Cloud{baseURL: base, key: key, hc: hc, timeout: timeout}
 	c.Sandboxes = &CloudSandboxes{c: c}
 	c.Functions = &CloudFunctions{c: c}
+	c.Snapshots = &CloudSnapshots{c: c}
+	c.Secrets = &CloudSecrets{c: c}
+	c.Pipelines = &CloudPipelines{c: c}
 	return c, nil
 }
 
@@ -315,6 +320,15 @@ type CloudSandboxInfo struct {
 	AsleepS           int64   `json:"asleep_s"`
 	SleepBytes        int64   `json:"sleep_bytes"`
 	CostUSD           float64 `json:"cost_usd"` // estimate so far
+	// SnapshotID is the durable snapshot it was made from, if any.
+	SnapshotID *string `json:"snapshot_id"`
+	Persistent bool    `json:"persistent"` // one long-lived container for every exec
+	Name       *string `json:"name"`
+	Image      *string `json:"image"`   // the OCI image of a sized create
+	DiskGB     *int    `json:"disk_gb"` // the data disk
+	CPU        string  `json:"cpu"`     // shared | dedicated
+	// Labels are the caller's key=value labels ({} when none).
+	Labels map[string]string `json:"labels"`
 }
 
 // Limits the Cloud API checks; the SDK checks them first.
@@ -346,7 +360,53 @@ type CloudCreateOptions struct {
 	// person agreed to. Without it a paid item answers 402
 	// price_not_accepted; a different price answers 409 price_changed.
 	AcceptPrice *float64
+
+	// Size is vCPU x GiB: one of CloudSizes ("2x4", "4x8", "8x16",
+	// "16x32"). A size, CPUs+MemMB, Image or DiskGB boots the sandbox cold
+	// at that size; Create waits for it unless NoWait.
+	Size string
+	// CPUs and MemMB: or name a size by its parts (4 and 8192 for 4x8).
+	CPUs  int
+	MemMB int
+	// Image is an OCI image to run, such as
+	// kosa8-template/universal-24.04-20261115.2 (default size 2x4).
+	Image string
+	// DiskGB is the data disk holding / and /workspace (8..200; default 32).
+	DiskGB int
+	// Persistent runs every exec in one long-lived container, so packages
+	// and background processes outside /workspace persist.
+	Persistent bool
+	// Docker lets the sandbox run its own Docker engine (start dockerd
+	// first); it needs a size or image and makes the sandbox persistent.
+	Docker bool
+	// CPU is "shared" (default) or "dedicated": whole physical cores, never
+	// sleeps, cannot be checkpointed or forked.
+	CPU string
+	// Name is your label for it (1..64 of letters, digits, '.', '_', '-');
+	// CloudListOptions.Name finds it.
+	Name string
+	// Labels are up to 16 key=value labels.
+	Labels map[string]string
+	// Env is given to every command the sandbox runs (an exec's own env
+	// wins per name). Values are never logged or returned by the API.
+	Env map[string]string
+	// Snapshot makes the sandbox from a durable snapshot (snap_...): no
+	// Template, Size, CPUs, MemMB, Image, DiskGB, Docker, Persistent, CPU or
+	// Region with it.
+	Snapshot string
+	// Secrets are names from Cloud.Secrets whose values the sandbox's
+	// egress broker adds on the way out; the sandbox holds placeholders.
+	// Needs a sized create; such a sandbox never sleeps.
+	Secrets []string
+	// Egress is the sandbox's own egress policy (default the org's).
+	Egress *CloudEgress
+	// NoWait returns as soon as the API answers, even while a sized sandbox
+	// is still booting (State "creating"); call Refresh or WaitRunning.
+	NoWait bool
 }
+
+// CloudSizes are the sizes a sized create takes (vCPU x GiB).
+var CloudSizes = []string{"2x4", "4x8", "8x16", "16x32"}
 
 func checkSleepAfter(v *int) error {
 	if v != nil && (*v < 0 || *v > CloudMaxSleepAfterS) {
@@ -403,11 +463,20 @@ func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*Clo
 	if o.AcceptPrice != nil {
 		body["accept_price"] = *o.AcceptPrice
 	}
+	if err := sizedBody(body, o); err != nil {
+		return nil, err
+	}
 	var r sandboxEnvelope
 	if err := s.c.request(ctx, "POST", "/v1/sandboxes", body, &r); err != nil {
 		return nil, err
 	}
-	return &CloudSandbox{c: s.c, Info: r.Sandbox}, nil
+	b := &CloudSandbox{c: s.c, Info: r.Sandbox}
+	if !o.NoWait && b.Info.State == "creating" {
+		if err := b.WaitRunning(ctx, 0); err != nil {
+			return b, err
+		}
+	}
+	return b, nil
 }
 
 // List returns the org's sandboxes; with all, deleted ones too. It returns
@@ -426,6 +495,10 @@ type CloudListOptions struct {
 	All    bool   // include deleted sandboxes
 	Limit  int    // page size; 0 the server's default
 	Cursor string // a page's NextCursor; "" the first page
+	Name   string // only the sandbox with this name
+	// Labels keep sandboxes with every one of these labels; a "" value
+	// matches the key with any value.
+	Labels map[string]string
 }
 
 // CloudSandboxPage is one page of sandboxes.
@@ -450,6 +523,16 @@ func (s *CloudSandboxes) ListPage(ctx context.Context, o CloudListOptions) (Clou
 	}
 	if o.Cursor != "" {
 		q.Set("cursor", o.Cursor)
+	}
+	if o.Name != "" {
+		q.Set("name", o.Name)
+	}
+	for _, k := range sortedKeys(o.Labels) {
+		if v := o.Labels[k]; v != "" {
+			q.Add("label", k+"="+v)
+		} else {
+			q.Add("label", k)
+		}
 	}
 	p := "/v1/sandboxes"
 	if len(q) > 0 {
@@ -555,16 +638,7 @@ func (b *CloudSandbox) Exec(ctx context.Context, argv []string, o *CloudExecOpti
 			body["image"] = o.Image
 		}
 		if len(o.Env) > 0 {
-			keys := make([]string, 0, len(o.Env))
-			for k := range o.Env {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			env := make([]string, 0, len(keys))
-			for _, k := range keys {
-				env = append(env, k+"="+o.Env[k])
-			}
-			body["env"] = env
+			body["env"] = envList(o.Env)
 		}
 	}
 	var r struct {

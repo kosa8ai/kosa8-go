@@ -345,7 +345,7 @@ func TestCloudFiles(t *testing.T) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.Path, "/v1/sandboxes/sbx_1/files/list"):
 			return rawAnswer{status: 200, json: map[string]any{"path": "/workspace", "files": []any{
-				map[string]any{"name": "a.txt", "path": "/workspace/a.txt", "type": "file", "size": 6, "mode": "-rw-r--r--", "mod_time": "2026-11-12T00:00:00Z"},
+				map[string]any{"name": "a.txt", "path": "/workspace/a.txt", "type": "file", "size": 6, "mode": 420, "mod_time": "2026-11-12T00:00:00Z"},
 			}}}
 		case r.Method == "GET" && strings.HasPrefix(r.Path, "/v1/sandboxes/sbx_1/files?"):
 			return rawAnswer{status: 200, raw: payload}
@@ -385,7 +385,7 @@ func TestCloudFiles(t *testing.T) {
 	}
 
 	l, err := f.List(ctx, "")
-	if err != nil || len(l) != 1 || l[0].Name != "a.txt" || l[0].Mode != "-rw-r--r--" || l[0].ModTime == "" {
+	if err != nil || len(l) != 1 || l[0].Name != "a.txt" || l[0].Mode != 420 || l[0].ModTime == "" {
 		t.Fatalf("%+v %v", l, err)
 	}
 	if stub.last().Path != "/v1/sandboxes/sbx_1/files/list?path=%2Fworkspace" {
