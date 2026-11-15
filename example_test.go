@@ -138,7 +138,7 @@ func Example_cloudErrors() {
 	}
 	_, err = box.ExecShell(ctx, "sleep 120", nil)
 	if errors.Is(err, kosa8.ErrExecTimeout) {
-		// Over ~30 s: run it in the background and poll instead.
+		// Over 90 s: run it in the background and poll instead.
 		_, _ = box.ExecShell(ctx, "nohup sh -c 'sleep 120; echo done' > /workspace/job.log 2>&1 &", nil)
 	}
 }

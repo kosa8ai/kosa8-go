@@ -71,7 +71,7 @@ another address. These snippets are compiled as examples in `example_test.go`.
   For Python create with `Template: "python"` (or another key from `cloud.Templates(ctx)`).
 - Each exec runs in a fresh container; only `/workspace` persists between calls. Install packages
   into `/workspace`.
-- A buffered exec is cut off after about **30 s** (`ErrExecTimeout`). Run long jobs in the background
+- A buffered exec runs at most **90 s** (`ErrExecTimeout`). Run long jobs in the background
   and poll: `box.ExecShell(ctx, "nohup make test > /workspace/test.log 2>&1 &", nil)`.
 - A request body is at most 64 KiB (413 `too_large`); a file read or write is at most 8 MiB.
 
@@ -119,7 +119,7 @@ Also `DiskGB`, `Persistent`, `CPU: "dedicated"`, `Region` (`us`, `eu` or a regio
 ### Background commands, previews, terminal
 
 ```go
-job, _ := box.ExecBackground(ctx, []string{"sh", "-c", "npm run build"}, nil) // no 30 s limit
+job, _ := box.ExecBackground(ctx, []string{"sh", "-c", "npm run build"}, nil) // no 90 s limit
 job, _ = box.WaitBackground(ctx, job.ID, 0)                                   // or BackgroundExec to poll once
 fmt.Println(*job.ExitCode, *job.Output)
 

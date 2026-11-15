@@ -667,7 +667,7 @@ func TestCloudExecTimeout(t *testing.T) {
 		}
 		e, _ := AsError(err)
 		msg, _ := tc.body["message"].(string)
-		if !errors.Is(err, ErrTimeout) || !strings.HasPrefix(e.Message, msg) || !strings.Contains(e.Message, "30 s") ||
+		if !errors.Is(err, ErrTimeout) || !strings.HasPrefix(e.Message, msg) || !strings.Contains(e.Message, "after 90 s") ||
 			!strings.Contains(e.Message, "background") || e.Code != tc.body["error"] || e.Status != tc.status {
 			t.Errorf("%s: %+v", tc.name, e)
 		}

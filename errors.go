@@ -51,7 +51,7 @@ const (
 	KindRateLimit        Kind = "rate_limit"        // 429: too many requests, or a quota reached
 	KindUnsupported      Kind = "unsupported"       // 501: not_available / not_supported
 	KindOrgFrozen        Kind = "org_frozen"        // 423: the org is frozen in the Security Center
-	KindExecTimeout      Kind = "exec_timeout"      // a kosa8 Cloud exec ran past the ~30 s limit
+	KindExecTimeout      Kind = "exec_timeout"      // a kosa8 Cloud exec ran past the 90 s limit
 	KindStream           Kind = "stream"            // a stream ended with an error frame
 	KindCheckpoint       Kind = "checkpoint"        // client-side checkpoint bookkeeping
 	KindTimeout          Kind = "timeout"
@@ -100,7 +100,7 @@ var (
 	ErrOrgFrozen = &Error{Kind: KindOrgFrozen}
 	// ErrExecTimeout: a kosa8 Cloud exec was cut off (504, code exec_timeout,
 	// or a 502 host_failed on /exec that says "timed out"). A buffered exec
-	// gets about 30 s; run long jobs in the background and poll. Also
+	// gets at most 90 s; run long jobs in the background and poll. Also
 	// matches ErrTimeout and ErrAPI.
 	ErrExecTimeout = &Error{Kind: KindExecTimeout}
 	ErrStream      = &Error{Kind: KindStream}

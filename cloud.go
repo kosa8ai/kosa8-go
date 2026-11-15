@@ -247,7 +247,7 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 }
 
 // execTimeoutHint is added to the cloud's own words when an exec is cut off.
-const execTimeoutHint = "kosa8 Cloud cuts a buffered exec off after about 30 s; run long jobs in the background " +
+const execTimeoutHint = "kosa8 Cloud stops a buffered exec after 90 s; run long jobs in the background " +
 	"(nohup cmd > /workspace/job.log 2>&1 &) and poll /workspace for the result"
 
 // cloudError reads the cloud's {error: code, message, upgrade_url?,
@@ -623,7 +623,7 @@ func (r CloudExecResult) OK() bool { return r.ExitCode != nil && *r.ExitCode == 
 // Exec runs argv and waits for it. A sleeping sandbox wakes for it.
 //
 // Each exec runs in a fresh container; only /workspace persists between
-// calls. The Cloud API cuts a buffered exec off after about 30 s (that is
+// calls. The Cloud API stops a buffered exec after 90 s (that is
 // ErrExecTimeout): run long jobs in the background (nohup ... & writing to
 // /workspace) and poll. The request body is capped at 64 KiB (413
 // too_large). ExitCode is nil when the cloud reports no exit status, so
