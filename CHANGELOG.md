@@ -1,7 +1,5 @@
 # Changelog
 
-## Unreleased (on top of 0.4.0)
-
 The rest of the kosa8 Cloud API:
 
 - **Sized and Docker creates**: `CloudCreateOptions` `Size`, `CPUs`/`MemMB`, `Image`, `DiskGB`,
@@ -21,7 +19,7 @@ The rest of the kosa8 Cloud API:
 - **Pipelines** (`Cloud.Pipelines`): `Run`, `Runs`, `Get`, `Wait`, `Logs`, `Cancel`,
   `Artifacts`, `DownloadArtifact`, `CreateHook`, `Hooks`, `DeleteHook`.
 
-## 0.4.0 — 2026-11-12
+## 0.4.0 — 2026-11-15
 
 kosa8 Cloud parity with the Python SDK. The default Cloud address is `https://api.kosa8.com`
 (0.3.0 defaulted to `api.kosa8.cloud`; do not use 0.3.0). `KOSA8_CLOUD_URL` still overrides it.
