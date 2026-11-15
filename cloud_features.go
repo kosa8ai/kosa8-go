@@ -227,7 +227,7 @@ type CloudBackgroundExec struct {
 func (e CloudBackgroundExec) Done() bool { return e.State == "exited" || e.ExitCode != nil }
 
 // ExecBackground starts argv and returns at once while it keeps running
-// (no 30 s limit). Poll it with BackgroundExec or WaitBackground.
+// (no 90 s limit). Poll it with BackgroundExec or WaitBackground.
 func (b *CloudSandbox) ExecBackground(ctx context.Context, argv []string, o *CloudExecOptions) (CloudBackgroundExec, error) {
 	if len(argv) == 0 {
 		return CloudBackgroundExec{}, usage("ExecBackground needs a command")
