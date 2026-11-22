@@ -1242,11 +1242,11 @@ func TestOrgTemplates(t *testing.T) {
 		return fakeAns{status: 404, body: errBody("not_found", "no", nil)}
 	})
 	tpl, err := c.OrgTemplates.Build(ctx, CloudTemplateBuild{Name: "swe-1", Image: "ghcr.io/x/y@sha256:ab", BuildArgs: map[string]string{"A": "1"},
-		SetupCmd: []string{"pip install -e ."}, Size: "4x8", Region: "eu-hel1"})
+		SetupCmd: []string{"pip install -e ."}, Size: "4x8", Region: "us-ash1"})
 	if err != nil || tpl.ID != "tpl_abcdefgh" || tpl.State != "queued" || tpl.Ready() {
 		t.Fatal(tpl, err)
 	}
-	want := map[string]any{"name": "swe-1", "image": "ghcr.io/x/y@sha256:ab", "build_args": map[string]any{"A": "1"}, "setup_cmd": "pip install -e .", "size": "4x8", "region": "eu-hel1"}
+	want := map[string]any{"name": "swe-1", "image": "ghcr.io/x/y@sha256:ab", "build_args": map[string]any{"A": "1"}, "setup_cmd": "pip install -e .", "size": "4x8", "region": "us-ash1"}
 	if b := f.reqs("POST", "/v1/templates")[0].Body; !reflect.DeepEqual(b, want) {
 		t.Fatal(b)
 	}

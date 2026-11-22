@@ -538,7 +538,7 @@ type CloudCreateOptions struct {
 	// Template is a key from Cloud.Templates (base, python, node, ...) or a
 	// kosa8 Store item: creator/name or creator/name@1.2.3.
 	Template string
-	Region   string // such as eu-hel1
+	Region   string // such as us-ash1
 	// SleepAfterS is idle seconds before the sandbox sleeps (0..604800);
 	// Ptr(0) never.
 	SleepAfterS *int

@@ -85,7 +85,7 @@ func newRawStub(t *testing.T, answer func(r rawReq) rawAnswer) (*rawStub, *Cloud
 func fullSandboxJSON(id string) map[string]any {
 	return map[string]any{
 		"id": id, "state": "running", "template": "base", "origin_item_version": "1.2.3",
-		"cpus": 1, "mem_mb": 512, "source": "fork", "parent_id": "sbx_1", "region": "eu-hel1",
+		"cpus": 1, "mem_mb": 512, "source": "fork", "parent_id": "sbx_1", "region": "us-ash1",
 		"own_host": true, "created_at": 1700000000000, "started_at": 1700000000100, "stopped_at": nil,
 		"deleted_at": nil, "delete_after": 1700003600000, "sleep_after_s": 300, "last_error": nil,
 		"host_unreachable": true, "running_s": 12, "asleep_s": 3, "cost_usd": 0.25,
@@ -320,12 +320,12 @@ func TestCloudListAllStopsOnRepeatedCursor(t *testing.T) {
 func TestCloudTemplates(t *testing.T) {
 	stub, c := newRawStub(t, func(rawReq) rawAnswer {
 		return rawAnswer{status: 200, json: map[string]any{"default_template": "base", "templates": []any{
-			map[string]any{"key": "base", "cpus": 1, "mem_mb": 512, "image": "alpine:3", "regions": []any{"eu-hel1"}, "hosts": 2, "warm": 3, "own_host": false},
+			map[string]any{"key": "base", "cpus": 1, "mem_mb": 512, "image": "alpine:3", "regions": []any{"us-ash1"}, "hosts": 2, "warm": 3, "own_host": false},
 			map[string]any{"key": "python"},
 		}}}
 	})
 	ts, err := c.Templates(context.Background())
-	if err != nil || len(ts) != 2 || ts[0].Key != "base" || ts[0].MemMB != 512 || ts[0].Regions[0] != "eu-hel1" || ts[0].Warm != 3 {
+	if err != nil || len(ts) != 2 || ts[0].Key != "base" || ts[0].MemMB != 512 || ts[0].Regions[0] != "us-ash1" || ts[0].Warm != 3 {
 		t.Fatalf("%+v %v", ts, err)
 	}
 	if r := stub.last(); r.Method != "GET" || r.Path != "/v1/templates" {
