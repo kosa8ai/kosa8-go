@@ -257,7 +257,7 @@ func (b *CloudSandbox) BackgroundExec(ctx context.Context, execID string) (Cloud
 	var r struct {
 		Exec CloudBackgroundExec `json:"exec"`
 	}
-	err := b.c.request(ctx, "GET", b.path("/exec/"+url.PathEscape(execID)), nil, &r)
+	err := b.c.request(ctx, "GET", fmt.Sprintf("/v1/sandboxes/%s/exec/%s", b.eid(), url.PathEscape(execID)), nil, &r)
 	return r.Exec, err
 }
 
@@ -290,7 +290,7 @@ type CloudSnapshot struct {
 	State           string  `json:"state"`
 	SourceSandboxID string  `json:"source_sandbox_id"`
 	Template        string  `json:"template"`
-	CPUs            int     `json:"cpus"`
+	CPUs            float64 `json:"cpus"`
 	MemMB           int     `json:"mem_mb"`
 	Image           *string `json:"image"`
 	DiskGB          *int    `json:"disk_gb"`
@@ -461,7 +461,7 @@ func (p *CloudPreviews) Delete(ctx context.Context, port int) error {
 	if err := checkPort(port); err != nil {
 		return err
 	}
-	return p.b.c.request(ctx, "DELETE", p.b.path("/previews/"+strconv.Itoa(port)), nil, nil)
+	return p.b.c.request(ctx, "DELETE", fmt.Sprintf("/v1/sandboxes/%s/previews/%d", p.b.eid(), port), nil, nil)
 }
 
 // ---- terminal ----
@@ -507,7 +507,46 @@ func (b *CloudSandbox) Terminal(ctx context.Context, o *CloudTerminalOptions) (C
 // stream sends one request and hands back the answer for the caller to
 // read; an HTTP error answer becomes a typed *Error. The request's timeout
 // does not apply; ctx bounds it.
+//
+// It is retried as send is (the same rules and c.retry) when the body can
+// be sent again: none, or an io.Seeker rewound to where it started.
 func (c *Cloud) stream(ctx context.Context, method, path, contentType string, body io.Reader) (*http.Response, error) {
+	var start int64
+	seeker, _ := body.(io.Seeker)
+	if seeker != nil {
+		pos, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			seeker = nil
+		}
+		start = pos
+	}
+	replayable := body == nil || seeker != nil
+	if _, closer := body.(io.Closer); closer && seeker != nil {
+		// net/http closes a request body that is an io.Closer (an
+		// *os.File); keep it open so a retry can rewind and resend it.
+		body = struct{ io.Reader }{body}
+	}
+	safe := method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE"
+	for attempt := 1; ; attempt++ {
+		resp, err := c.streamOnce(ctx, method, path, contentType, body)
+		if err == nil {
+			return resp, nil
+		}
+		if !replayable || !(safe || preExecution(err)) || !c.retry.ShouldRetry(err, attempt) {
+			return nil, err
+		}
+		if sleepCtx(ctx, c.retry.Delay(err, attempt)) != nil {
+			return nil, err
+		}
+		if seeker != nil {
+			if _, serr := seeker.Seek(start, io.SeekStart); serr != nil {
+				return nil, err
+			}
+		}
+	}
+}
+
+func (c *Cloud) streamOnce(ctx context.Context, method, path, contentType string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, usage("build request: %v", err)
@@ -862,7 +901,7 @@ func (s *CloudSchedules) List(ctx context.Context) ([]CloudSchedule, error) {
 
 // Delete removes a schedule.
 func (s *CloudSchedules) Delete(ctx context.Context, id string) error {
-	return s.b.c.request(ctx, "DELETE", s.b.path("/schedules/"+url.PathEscape(id)), nil, nil)
+	return s.b.c.request(ctx, "DELETE", fmt.Sprintf("/v1/sandboxes/%s/schedules/%s", s.b.eid(), url.PathEscape(id)), nil, nil)
 }
 
 // Run runs a schedule now and returns the run.
@@ -970,7 +1009,7 @@ func (b *CloudSandbox) ResetCodeContext(ctx context.Context, name string) error 
 
 // DeleteCodeContext deletes a context.
 func (b *CloudSandbox) DeleteCodeContext(ctx context.Context, name string) error {
-	return b.c.request(ctx, "DELETE", b.path("/code/contexts/"+url.PathEscape(name)), nil, nil)
+	return b.c.request(ctx, "DELETE", fmt.Sprintf("/v1/sandboxes/%s/code/contexts/%s", b.eid(), url.PathEscape(name)), nil, nil)
 }
 
 // ---- metrics, logs, labels ----
@@ -988,7 +1027,7 @@ type CloudNet struct {
 type CloudMetrics struct {
 	ID           string   `json:"id"`
 	State        string   `json:"state"`
-	CPUs         int      `json:"cpus"`
+	CPUs         float64  `json:"cpus"`
 	MemMB        int      `json:"mem_mb"`
 	DiskGB       int      `json:"disk_gb"`
 	CPUPct       *float64 `json:"cpu_pct"`

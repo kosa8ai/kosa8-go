@@ -54,7 +54,7 @@ type CloudTemplateBuild struct {
 	// SetupCmd runs once in the booted template before it is saved; a
 	// single string runs under sh -c.
 	SetupCmd []string
-	Size     string // one of CloudSizes
+	Size     string // one of CloudStandardSizes (templates take no small size)
 	CPUs     int
 	MemMB    int
 	Region   string
@@ -63,11 +63,11 @@ type CloudTemplateBuild struct {
 func sizeFields(body map[string]any, size string, cpus, mem int) error {
 	if size != "" {
 		ok := false
-		for _, s := range CloudSizes {
+		for _, s := range CloudStandardSizes {
 			ok = ok || s == size
 		}
 		if !ok {
-			return usage("Size must be one of %v, not %q", CloudSizes, size)
+			return usage("Size must be one of %v, not %q (the small sizes are for sandboxes only)", CloudStandardSizes, size)
 		}
 		body["size"] = size
 	}
