@@ -367,3 +367,33 @@ func TestCloudUnreachableAndTimeout(t *testing.T) {
 		t.Fatalf("canceled: %v", err)
 	}
 }
+
+func TestCloudExecTimeoutS(t *testing.T) {
+	ctx := context.Background()
+	stub, c := newCloudStub(t, func(r seenReq) (int, any) {
+		if r.Body["timeout_s"] == 2.0 {
+			return 504, map[string]any{"error": "exec_timeout", "message": "the command ran longer than its timeout_s of 2 s and was stopped"}
+		}
+		return 200, map[string]any{"exit": 0, "stdout": "", "stderr": ""}
+	})
+	box := &CloudSandbox{c: c, Info: CloudSandboxInfo{ID: "sbx_1", State: "running"}}
+	if _, err := box.ExecShell(ctx, "true", &CloudExecOptions{TimeoutS: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stub.seen[len(stub.seen)-1].Body; !reflect.DeepEqual(got, map[string]any{"cmd": []any{"sh", "-c", "true"}, "timeout_s": 30.0}) {
+		t.Fatalf("body %v", got)
+	}
+	_, err := box.ExecShell(ctx, "sleep 9", &CloudExecOptions{TimeoutS: 2})
+	if !errors.Is(err, ErrExecTimeout) || strings.Contains(err.Error(), "background") {
+		t.Fatalf("own timeout: %v", err)
+	}
+	n := len(stub.seen)
+	for _, bad := range []int{-1, 91} {
+		if _, err := box.ExecShell(ctx, "true", &CloudExecOptions{TimeoutS: bad}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("%d: %v", bad, err)
+		}
+	}
+	if len(stub.seen) != n {
+		t.Fatal("a bad TimeoutS was sent")
+	}
+}
