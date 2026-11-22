@@ -5,7 +5,7 @@ your own machine. Standard library only.
 Method for method it matches [`@kosa8/sdk`](https://github.com/kosa8ai/kosa8-js) (TypeScript) and `kosa8` (Python).
 
 ```sh
-go get github.com/kosa8ai/kosa8-go@v0.4.0
+go get github.com/kosa8ai/kosa8-go@v0.5.0
 ```
 
 ## kosa8 Cloud quickstart
@@ -174,6 +174,82 @@ fmt.Println(out.OK, string(out.Result)) // true {"hello":"kosa8"}
 A function that raised is `out.OK == false` with `out.Error`, not a Go error.
 Also `Functions.List` / `Get` / `Delete` / `Map`.
 
+### RL training and fan-out
+
+Many sandboxes at once, leased so a crashed trainer leaks none, graded in a sealed copy, and
+recorded on an RL run (app.kosa8.com, RL runs).
+
+```go
+// Up to 1000 sandboxes in one call; each is deleted 10 minutes after the last heartbeat.
+batch, _ := cloud.Sandboxes.CreateMany(ctx, kosa8.CloudBatchOptions{
+	CloudCreateOptions: kosa8.CloudCreateOptions{Template: "python", LeaseS: 600},
+	Count: 64, RunID: "exp-7", Prefix: "roll",
+})
+fmt.Println(batch.Created, len(batch.Failed)) // Failed: index, code, FailureClass, Retryable
+_, _ = cloud.Sandboxes.Heartbeat(ctx, kosa8.CloudSelector{RunID: "exp-7"}, 0)
+_, _ = cloud.Sandboxes.Drain(ctx, kosa8.CloudSelector{RunID: "exp-7"})
+
+// Copies of a set-up sandbox, with labels, a run and a lease.
+kids, _ := base.ForkWith(ctx, kosa8.CloudForkOptions{N: 200, RunID: "exp-7", LeaseS: 600})
+
+// Grade a solved sandbox with hidden tests in a sealed copy (no network).
+g, _ := box.Grade(ctx, []string{"python", "/grader/test.py"}, &kosa8.CloudGradeOptions{
+	Files: map[string][]byte{"/grader/test.py": hidden},
+})
+fmt.Println(g.Reward, g.FailureClass) // Reward nil when the grader did not finish
+```
+
+`ForkMap` runs a function in a fork per item, at most `Concurrency` at once, retrying infra
+failures on a fresh fork, and deletes every child however it ends:
+
+```go
+res, _ := kosa8.ForkMap(ctx, base, prompts, func(ctx context.Context, child *kosa8.CloudSandbox, p string) (string, error) {
+	r, err := child.ExecShell(ctx, "python agent.py "+strconv.Quote(p), nil)
+	return r.Stdout, err
+}, &kosa8.ForkMapOptions{Concurrency: 32, Timeout: time.Minute})
+```
+
+An RL run labels and leases its sandboxes, heartbeats them in the background, records rollouts in
+batches of at most 500, and drains on `Finish`:
+
+```go
+run, _ := cloud.StartRun(ctx, kosa8.CloudRunOptions{Name: "grpo-qwen", Project: "swe"})
+defer run.Finish(ctx, "finished")
+results, _ := kosa8.MapRollouts(ctx, run, base, tasks, func(ctx context.Context, sb *kosa8.CloudSandbox, t Task) (any, error) {
+	return nil, runAgent(ctx, sb, t) // the grader gives the reward
+}, &kosa8.RunMapOptions[Task]{
+	GradeCmd:  []string{"python", "/grader/test.py"},
+	Files:     func(t Task) map[string][]byte { return t.Hidden },
+	GroupSize: 8, // GRPO's G
+})
+rewards, mask := results.Rewards(), results.Mask() // masked (infra, quota, your own errors): reward nil, never 0
+data, _ := run.Export(ctx) // every rollout as JSON lines
+```
+
+Every call that makes sandboxes (create, batch, fork, grade) carries an `Idempotency-Key` that its
+retries reuse. `CloudOptions.Retry` (default `kosa8.DefaultRetryPolicy()`, 3 tries with full
+jitter, at least `Retry-After`) retries only what is safe; `&kosa8.NoRetry` turns it off.
+`kosa8.ClassifyFailure(err)` says whose fault any error was.
+
+Org templates are built once and restored in about a second:
+
+```go
+tpl, _ := cloud.OrgTemplates.Build(ctx, kosa8.CloudTemplateBuild{Name: "swe-django-1", Image: "ghcr.io/org/task@sha256:..."})
+tpl, _ = cloud.OrgTemplates.WaitReady(ctx, tpl.ID, 0)
+box, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Template: "swe-django-1"})
+// also Import (many images at once), List, Get, Delete
+```
+
+Capability tokens hand one sandbox to an end user without the API key:
+
+```go
+tok, _ := cloud.Tokens.Create(ctx, kosa8.CloudTokenOptions{
+	Scopes: []string{kosa8.ScopeSandboxesRead, kosa8.ScopeSandboxesWrite}, SandboxIDs: []string{box.ID()}, TTLS: 3600,
+})
+userCloud, _ := kosa8.NewCloud(kosa8.CloudOptions{APIKey: tok.Secret}) // k8c_tok_...
+// also Tokens.List, Tokens.Revoke
+```
+
 ### Cloud errors
 
 Every error is a `*kosa8.Error`; `kosa8.AsError(err)` gives its `Status`, the cloud's stable `Code`
@@ -187,6 +263,8 @@ and its sentence in `Message`. All of these also match `kosa8.ErrAPI`.
 | `ErrExecTimeout` | 504, code `exec_timeout`, or 502 `host_failed` on `/exec` saying "timed out" | run the job in the background; also matches `ErrTimeout` |
 | `ErrUnsupported` | 501 `not_available` / `not_supported`: no data plane on this host | |
 | `ErrNotFound`, `ErrAuth`, `ErrPolicy`, `ErrConflict`, `ErrBadRequest` | 404, 401, 403, 409, 400 | |
+
+Each also has `e.FailureClass` (`infra`, `quota`, `client`, `timeout`) and `e.Retryable`.
 
 A new organization runs nothing until a payment method is on file; until then creating a sandbox
 fails with `ErrPaymentRequired`.

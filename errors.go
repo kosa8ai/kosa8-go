@@ -33,6 +33,11 @@ type Error struct {
 	// RetryAfter is the server's Retry-After header (a 429, usually); zero
 	// when it sent none.
 	RetryAfter time.Duration
+	// FailureClass and Retryable are kosa8 Cloud's word on whose fault the
+	// failure was and whether the same call may work if sent again (see
+	// ClassifyFailure, which also covers errors without them).
+	FailureClass FailureClass
+	Retryable    bool
 }
 
 // Kind classifies an Error.

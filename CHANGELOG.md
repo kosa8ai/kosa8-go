@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.0 — unreleased
+
+RL training and fan-out on kosa8 Cloud, aligned with the Cloud API's RL release and the Python
+SDK's `kosa8.rl`.
+
+- **Failure classes**: every Cloud `*Error` carries `FailureClass` (`ok`, `exit_nonzero`,
+  `timeout`, `infra`, `quota`, `client`) and `Retryable`, as the server sends them (or by its own
+  rule, `FailureOf`, when it does not). `ClassifyFailure(err)` covers any error (`error` for your
+  own). `CloudExecResult` gains `FailureClass` and `Retryable`.
+- **Retries**: `CloudOptions.Retry` (`RetryPolicy`, default `DefaultRetryPolicy()`: 3 tries, full
+  jitter backoff from 0.5 s to 8 s, at least the server's `Retry-After` up to 60 s; `&NoRetry`
+  turns it off). Applied only where safe: reads, deletes, heartbeats, drains, the keyed POSTs, and
+  any request answered 429. `Retry(ctx, policy, fn)` for your own calls.
+- **Idempotency-Key** on create, batch, fork and grade: a new UUID (or `IdempotencyKey`), reused on
+  every retry, so a retry after a timeout or a 5xx never doubles the fleet.
+- **Fan-out**: `Sandboxes.CreateMany` (up to 1000, `CloudBatchOptions` with `RunID`, `Prefix`,
+  `PartialOK`) and `CloudSandbox.ForkWith` (`CloudForkOptions`: `N` up to 1000, `Labels`, `RunID`,
+  `LeaseS`, `Prefix`, `PartialOK`) return a `CloudSandboxBatch` with `Failed`. `Fork(n)` now takes
+  up to 1000 (still all or nothing).
+- **Leases**: `CloudCreateOptions.LeaseS`; `Sandboxes.Heartbeat` / `CloudSandbox.Heartbeat`;
+  `Sandboxes.Drain` (by run, labels or ids; follows `more`).
+- **Sealed grader**: `CloudSandbox.Grade` / `Sandboxes.Grade` (hidden files, no network, reward,
+  optional recording on a run).
+- **`ForkMap`**: run a function over items, each in its own fork, bounded concurrency, retries on a
+  fresh fork, per-item timeout, and every child deleted however it ends.
+- **RL runs**: `Cloud.StartRun` / `AttachRun` -> `*CloudRun` (background heartbeats, `Record` in
+  batches of at most 500, `Flush`, `Finish` with drain, `Summary`, `Update`, `Rollouts`, `Export`,
+  `Drain`), `Cloud.ListRuns`, and `MapRollouts` (one training step with sealed grading, group
+  sampling, masking, results as `Rollouts`).
+- **Org templates**: `Cloud.OrgTemplates` (`Build`, `Import`, `List`, `Get`, `Delete`, `WaitReady`).
+- **Capability tokens**: `Cloud.Tokens` (`Create`, `List`, `Revoke`); `NewCloud` accepts a
+  `k8c_tok_` token as the key.
+
+## 0.4.0 — 2026-11-15
+
 The rest of the kosa8 Cloud API:
 
 - **Sized and Docker creates**: `CloudCreateOptions` `Size`, `CPUs`/`MemMB`, `Image`, `DiskGB`,
@@ -18,8 +53,6 @@ The rest of the kosa8 Cloud API:
   `Cloud.Capabilities`, `Cloud.EgressPresets`.
 - **Pipelines** (`Cloud.Pipelines`): `Run`, `Runs`, `Get`, `Wait`, `Logs`, `Cancel`,
   `Artifacts`, `DownloadArtifact`, `CreateHook`, `Hooks`, `DeleteHook`.
-
-## 0.4.0 — 2026-11-15
 
 kosa8 Cloud parity with the Python SDK. The default Cloud address is `https://api.kosa8.com`
 (0.3.0 defaulted to `api.kosa8.cloud`; do not use 0.3.0). `KOSA8_CLOUD_URL` still overrides it.

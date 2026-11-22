@@ -17,6 +17,7 @@ package kosa8
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +37,10 @@ const DefaultCloudURL = "https://api.kosa8.com"
 // CloudKeyPrefix starts every kosa8 Cloud API key.
 const CloudKeyPrefix = "k8c_live_"
 
+// CloudTokenPrefix starts a capability token (CloudTokens.Create), which a
+// Cloud client takes in place of an API key.
+const CloudTokenPrefix = "k8c_tok_"
+
 // CloudOptions configures a Cloud client.
 type CloudOptions struct {
 	APIKey     string              // default $KOSA8_API_KEY
@@ -42,6 +48,12 @@ type CloudOptions struct {
 	HTTPClient *http.Client        // default a plain http.Client
 	Timeout    time.Duration       // per request; default 120 s
 	Getenv     func(string) string // for tests; default os.Getenv
+	// Retry is applied to every request where trying again is safe: reads,
+	// deletes, heartbeats and drains on infra failures; the calls that make
+	// sandboxes (create, batch, fork, grade), which carry an Idempotency-Key
+	// reused on each retry; and any request answered 429, waiting at least
+	// its Retry-After. Default DefaultRetryPolicy(); &NoRetry turns it off.
+	Retry *RetryPolicy
 }
 
 // Cloud is a client for the kosa8 Cloud control plane.
@@ -56,6 +68,10 @@ type Cloud struct {
 	key     string
 	hc      *http.Client
 	timeout time.Duration
+	retry   RetryPolicy
+
+	OrgTemplates *CloudOrgTemplates // the org's own templates, built once and restored
+	Tokens       *CloudTokens       // short-lived capability tokens
 }
 
 func checkCloudBase(raw string) (string, error) {
@@ -72,7 +88,8 @@ func checkCloudBase(raw string) (string, error) {
 	return strings.TrimRight(raw, "/"), nil
 }
 
-// NewCloud returns a Cloud client. The key must start with k8c_live_ and the
+// NewCloud returns a Cloud client. The key must start with k8c_live_ (or be
+// a k8c_tok_ capability token) and the
 // address must use https (plain http only to localhost).
 func NewCloud(o CloudOptions) (*Cloud, error) {
 	getenv := o.Getenv
@@ -87,8 +104,8 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	if key == "" {
 		return nil, usage("no kosa8 Cloud API key: pass CloudOptions.APIKey or set KOSA8_API_KEY")
 	}
-	if !strings.HasPrefix(key, CloudKeyPrefix) {
-		return nil, usage("a kosa8 Cloud API key starts with %s", CloudKeyPrefix)
+	if !strings.HasPrefix(key, CloudKeyPrefix) && !strings.HasPrefix(key, CloudTokenPrefix) {
+		return nil, usage("a kosa8 Cloud API key starts with %s (a capability token with %s)", CloudKeyPrefix, CloudTokenPrefix)
 	}
 	base := o.BaseURL
 	if base == "" {
@@ -109,7 +126,13 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
-	c := &Cloud{baseURL: base, key: key, hc: hc, timeout: timeout}
+	retry := DefaultRetryPolicy()
+	if o.Retry != nil {
+		retry = *o.Retry
+	}
+	c := &Cloud{baseURL: base, key: key, hc: hc, timeout: timeout, retry: retry}
+	c.OrgTemplates = &CloudOrgTemplates{c: c}
+	c.Tokens = &CloudTokens{c: c}
 	c.Sandboxes = &CloudSandboxes{c: c}
 	c.Functions = &CloudFunctions{c: c}
 	c.Snapshots = &CloudSnapshots{c: c}
@@ -165,17 +188,23 @@ type CloudTemplate struct {
 
 // request sends a JSON body (or none) and decodes a JSON answer into out.
 func (c *Cloud) request(ctx context.Context, method, path string, body, out any) error {
-	var rd io.Reader
+	return c.requestKeyed(ctx, method, path, body, out, "")
+}
+
+// requestKeyed is request with an Idempotency-Key: key, or a new one on the
+// calls that make sandboxes (keyedRoute). The same key goes with every retry.
+func (c *Cloud) requestKeyed(ctx context.Context, method, path string, body, out any, key string) error {
+	var payload []byte
 	ct := ""
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return usage("encode request: %v", err)
 		}
-		rd = bytes.NewReader(b)
+		payload = b
 		ct = "application/json"
 	}
-	b, err := c.do(ctx, method, path, ct, rd, "application/json")
+	b, err := c.send(ctx, method, path, ct, payload, "application/json", key)
 	if err != nil {
 		return err
 	}
@@ -188,9 +217,88 @@ func (c *Cloud) request(ctx context.Context, method, path string, body, out any)
 	return nil
 }
 
+// keyedRE: the POSTs kosa8 Cloud keeps an Idempotency-Key for (24 hours).
+var keyedRE = regexp.MustCompile(`^/v1/sandboxes(/batch|/[A-Za-z0-9_]{1,64}/(fork|grade))?$`)
+
+// idempotentPosts are POSTs that are safe to send twice.
+var idempotentPosts = map[string]bool{"/v1/sandboxes/heartbeat": true, "/v1/sandboxes/drain": true}
+
+func barePath(p string) string {
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		return p[:i]
+	}
+	return p
+}
+
+func keyedRoute(method, path string) bool {
+	return method == "POST" && keyedRE.MatchString(barePath(path))
+}
+
+var idemKeyRE = regexp.MustCompile(`^[\x21-\x7e]{1,255}$`)
+
+func checkIdempotencyKey(k string) error {
+	if k != "" && !idemKeyRE.MatchString(k) {
+		return usage("IdempotencyKey must be 1-255 printable ASCII characters, e.g. a UUID")
+	}
+	return nil
+}
+
+// NewIdempotencyKey is a random UUID (version 4).
+func NewIdempotencyKey() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("k8-%d", time.Now().UnixNano())
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// send is one call, retried as c.retry allows for this method and path.
+func (c *Cloud) send(ctx context.Context, method, path, contentType string, body []byte, accept, key string) ([]byte, error) {
+	if err := checkIdempotencyKey(key); err != nil {
+		return nil, err
+	}
+	if key == "" && keyedRoute(method, path) {
+		key = NewIdempotencyKey()
+	}
+	safe := key != "" || method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || idempotentPosts[barePath(path)]
+	for attempt := 1; ; attempt++ {
+		var rd io.Reader
+		if body != nil {
+			rd = bytes.NewReader(body)
+		}
+		b, err := c.once(ctx, method, path, contentType, rd, accept, key)
+		if err == nil {
+			return b, nil
+		}
+		e, _ := AsError(err)
+		allowed := safe || (e != nil && e.Status == 429)
+		if !allowed || !c.retry.ShouldRetry(err, attempt) {
+			return nil, err
+		}
+		if sleepCtx(ctx, c.retry.Delay(err, attempt)) != nil {
+			return nil, err
+		}
+	}
+}
+
 // do sends one request and returns the answer's body; an HTTP error answer
 // becomes a typed *Error.
 func (c *Cloud) do(ctx context.Context, method, path, contentType string, body io.Reader, accept string) ([]byte, error) {
+	var payload []byte
+	if body != nil {
+		b, err := io.ReadAll(body)
+		if err != nil {
+			return nil, usage("read request body: %v", err)
+		}
+		payload = b
+	}
+	return c.send(ctx, method, path, contentType, payload, accept, "")
+}
+
+// once sends one request, without retries.
+func (c *Cloud) once(ctx context.Context, method, path, contentType string, body io.Reader, accept, key string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
@@ -202,6 +310,9 @@ func (c *Cloud) do(ctx context.Context, method, path, contentType string, body i
 	req.Header.Set("User-Agent", UserAgent)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -220,7 +331,9 @@ func (c *Cloud) do(ctx context.Context, method, path, contentType string, body i
 	}
 	if resp.StatusCode >= 400 {
 		e := cloudError(resp.StatusCode, decodeBody(b), method, path)
-		e.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		if ra := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ra > 0 {
+			e.RetryAfter = ra
+		}
 		return nil, e
 	}
 	return b, nil
@@ -270,6 +383,24 @@ func cloudError(status int, body any, method, path string) *Error {
 	e.Body = body
 	e.UpgradeURL = upgrade
 	e.AgentMessage = agent
+	e.FailureClass, e.Retryable = FailureOf(status, code)
+	if m, ok := body.(map[string]any); ok {
+		if fc, ok := m["failure_class"].(string); ok && fc != "" {
+			e.FailureClass = FailureClass(fc)
+			if rt, ok := m["retryable"].(bool); ok {
+				e.Retryable = rt
+			} else {
+				e.Retryable = e.FailureClass == FailureInfra
+			}
+		}
+		// e.g. 409 idempotency_in_progress {retry_after_s: 2}
+		if ra, ok := m["retry_after_s"].(float64); ok && ra > 0 {
+			e.RetryAfter = time.Duration(ra * float64(time.Second))
+		}
+	}
+	if code == codeIdempotencyInProgress {
+		e.Retryable = true
+	}
 	switch {
 	case status == 423 || code == "org_frozen":
 		e.Kind = KindOrgFrozen
@@ -336,7 +467,7 @@ const (
 	CloudMaxSleepAfterS = 604800  // 7 days
 	CloudMinTTLSeconds  = 60      // 1 minute
 	CloudMaxTTLSeconds  = 7776000 // 90 days
-	CloudMaxForks       = 100
+	CloudMaxForks       = 100     // copies a plain Fork made before 0.5.0; Fork and ForkWith now take CloudMaxBatch
 	CloudMaxLabelLen    = 200
 )
 
@@ -403,6 +534,16 @@ type CloudCreateOptions struct {
 	// NoWait returns as soon as the API answers, even while a sized sandbox
 	// is still booting (State "creating"); call Refresh or WaitRunning.
 	NoWait bool
+	// LeaseS leases the sandbox (60..86400 s): it is deleted LeaseS from now
+	// unless a heartbeat (CloudSandboxes.Heartbeat) moves that forward, so a
+	// crashed client leaks nothing. Not with TTLSeconds or DeleteAfter.
+	LeaseS int
+	// IdempotencyKey is sent as the Idempotency-Key header (default a new
+	// UUID) and reused on every retry, so a create retried after a timeout
+	// or a 5xx makes one sandbox, not two. For 24 hours the same key and
+	// body get the first answer again; another body is 422
+	// idempotency_mismatch.
+	IdempotencyKey string
 }
 
 // CloudSizes are the sizes a sized create takes (vCPU x GiB).
@@ -437,6 +578,24 @@ func lifetimeBody(body map[string]any, ttl int, deleteAfter int64) error {
 // CloudSandboxes creates and finds cloud sandboxes.
 type CloudSandboxes struct{ c *Cloud }
 
+// execClass reads an exec answer's failure_class and retryable.
+type execClass struct {
+	FC *string `json:"failure_class"`
+	RT *bool   `json:"retryable"`
+}
+
+func (x execClass) class(exit *int) (FailureClass, bool) {
+	fc, rt := execFailure(exit)
+	if x.FC != nil && *x.FC != "" {
+		fc = FailureClass(*x.FC)
+		rt = fc == FailureInfra
+	}
+	if x.RT != nil {
+		rt = *x.RT
+	}
+	return fc, rt
+}
+
 type sandboxEnvelope struct {
 	Sandbox CloudSandboxInfo `json:"sandbox"`
 }
@@ -466,8 +625,11 @@ func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*Clo
 	if err := sizedBody(body, o); err != nil {
 		return nil, err
 	}
+	if err := leaseBody(body, o.LeaseS, o.TTLSeconds, o.DeleteAfter); err != nil {
+		return nil, err
+	}
 	var r sandboxEnvelope
-	if err := s.c.request(ctx, "POST", "/v1/sandboxes", body, &r); err != nil {
+	if err := s.c.requestKeyed(ctx, "POST", "/v1/sandboxes", body, &r, o.IdempotencyKey); err != nil {
 		return nil, err
 	}
 	b := &CloudSandbox{c: s.c, Info: r.Sandbox}
@@ -615,6 +777,11 @@ type CloudExecResult struct {
 	Stdout   string
 	Stderr   string
 	WokeMs   *int // set when the sandbox was asleep and woke for this command
+	// FailureClass is ok (exit 0), exit_nonzero (the command failed) or infra
+	// (the host gave no exit code); Retryable says the same exec may work if
+	// sent again.
+	FailureClass FailureClass
+	Retryable    bool
 }
 
 // OK reports whether the command exited 0.
@@ -646,11 +813,13 @@ func (b *CloudSandbox) Exec(ctx context.Context, argv []string, o *CloudExecOpti
 		Stdout string `json:"stdout"`
 		Stderr string `json:"stderr"`
 		WokeMs *int   `json:"woke_ms"`
+		execClass
 	}
 	if err := b.c.request(ctx, "POST", b.path("/exec"), body, &r); err != nil {
 		return CloudExecResult{}, err
 	}
-	return CloudExecResult{ExitCode: r.Exit, Stdout: r.Stdout, Stderr: r.Stderr, WokeMs: r.WokeMs}, nil
+	fc, rt := r.class(r.Exit)
+	return CloudExecResult{ExitCode: r.Exit, Stdout: r.Stdout, Stderr: r.Stderr, WokeMs: r.WokeMs, FailureClass: fc, Retryable: rt}, nil
 }
 
 // ExecShell runs a command line through sh -c (the string form of the
