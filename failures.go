@@ -32,7 +32,7 @@ const codeIdempotencyInProgress = "idempotency_in_progress"
 var (
 	infraCodes = setOf("host_failed", "not_ready", "no_capacity", "host_unreachable", "host_unavailable", "host_busy",
 		"host_restarting", "wake_failed", "try_again", "internal", "kernel_failed", "egress_failed", "dns_unreachable",
-		"host_lost", "host_removed", "insufficient_storage", "starting")
+		"host_lost", "host_removed", "insufficient_storage", "starting", "database_busy")
 	rateCodes  = setOf("rate_limited", "slow_down", "too_soon")
 	quotaCodes = setOf("quota_exceeded", "running_limit", "plan_required", "plan_limit", "plan_feature", "payment_required",
 		"payment_declined", "spending_cap_reached", "snapshot_limit", "org_frozen", "org_suspended", "too_many_runs")
