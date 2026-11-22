@@ -106,7 +106,7 @@ func TestCloudDefaultBaseURL(t *testing.T) {
 }
 
 func TestCloudVersionAndUserAgent(t *testing.T) {
-	if Version != "0.4.0" || UserAgent != "kosa8-go/0.4.0" {
+	if Version != "0.5.0" || UserAgent != "kosa8-go/0.5.0" {
 		t.Fatalf("%s %s", Version, UserAgent)
 	}
 	stub, c := newRawStub(t, func(rawReq) rawAnswer { return rawAnswer{status: 200, json: map[string]any{}} })
@@ -515,7 +515,7 @@ func TestCloudCheckpointsRewindForkPorts(t *testing.T) {
 		t.Fatal("fork not bound to the client")
 	}
 	n = len(stub.seen)
-	for _, bad := range []int{-1, 101} {
+	for _, bad := range []int{-1, 1001} {
 		if _, err := b.Fork(ctx, bad); !errors.Is(err, ErrUsage) {
 			t.Fatalf("fork %d: %v", bad, err)
 		}

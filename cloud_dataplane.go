@@ -271,8 +271,9 @@ func (b *CloudSandbox) Rewind(ctx context.Context, checkpointID string) (CloudRe
 	return r.CloudRewindResult, nil
 }
 
-// Fork makes n copies (1..100; 0 means 1) of the sandbox as it is now, on
-// its host, all or nothing, and returns them.
+// Fork makes n copies (1..1000; 0 means 1) of the sandbox as it is now, on
+// its host, all or nothing, and returns them. ForkWith adds labels, a run, a
+// lease, names and partial results.
 //
 // Needs the host's data plane; on hosts without it the API answers 501
 // (not_available / not_supported), returned as ErrUnsupported. Not every
@@ -281,20 +282,18 @@ func (b *CloudSandbox) Fork(ctx context.Context, n int) ([]*CloudSandbox, error)
 	if n == 0 {
 		n = 1
 	}
-	if n < 1 || n > CloudMaxForks {
-		return nil, usage("Fork makes 1..%d copies, not %d", CloudMaxForks, n)
+	if n < 1 || n > CloudMaxBatch {
+		return nil, usage("Fork makes 1..%d copies, not %d", CloudMaxBatch, n)
 	}
-	var r struct {
-		Sandboxes []CloudSandboxInfo `json:"sandboxes"`
+	o := CloudForkOptions{N: n}
+	if n > CloudMaxForks {
+		o.PartialOK = Ptr(false) // all or nothing, as for n <= 100
 	}
-	if err := b.c.request(ctx, "POST", b.path("/fork"), map[string]any{"n": n}, &r); err != nil {
+	r, err := b.ForkWith(ctx, o)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*CloudSandbox, 0, len(r.Sandboxes))
-	for _, i := range r.Sandboxes {
-		out = append(out, &CloudSandbox{c: b.c, Info: i})
-	}
-	return out, nil
+	return r.Sandboxes, nil
 }
 
 // CloudPort is a TCP port listening in one of the sandbox's containers.
