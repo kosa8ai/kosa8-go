@@ -5,7 +5,7 @@ your own machine. Standard library only.
 Method for method it matches [`@kosa8/sdk`](https://github.com/kosa8ai/kosa8-js) (TypeScript) and `kosa8` (Python).
 
 ```sh
-go get github.com/kosa8ai/kosa8-go@latest
+go get github.com/kosa8ai/kosa8-go@v0.6.1
 ```
 
 ## kosa8 Cloud quickstart
@@ -69,11 +69,12 @@ another address. These snippets are compiled as examples in `example_test.go`.
 
 - The default template, `base`, is Alpine Linux. `sh` is busybox: there is no bash, python or git.
   For Python create with `Template: "python"` (or another key from `cloud.Templates(ctx)`).
-- Only `/workspace` is sure to persist between calls. An exec may run in a fresh container, so `cd`,
-  `export`, processes it leaves running and anything installed outside `/workspace` may be gone by
-  the next one. Install packages into `/workspace`, or create with `Persistent: true` (one
-  long-lived container) to keep the whole filesystem and background processes; the code
-  interpreter (`RunCode`) needs it, and it counts against your plan's persistent-sandbox limit.
+- Each exec is a fresh process (it may run in a fresh container), so `cd`, `export` and processes
+  it leaves running are gone by the next one. Files in `/workspace` persist for the sandbox's
+  life. Packages installed outside `/workspace` (apk, apt, a global pip) need `Persistent: true`
+  (one long-lived container: the whole filesystem and background processes last between
+  commands); install into `/workspace` otherwise. The code interpreter (`RunCode`) needs a
+  persistent sandbox, and persistent sandboxes count against your plan's persistent limit.
 - A buffered exec runs at most **90 s** (`ErrExecTimeout`). Run long jobs in the background
   and poll: `box.ExecShell(ctx, "nohup make test > /workspace/test.log 2>&1 &", nil)`.
   `&kosa8.CloudExecOptions{TimeoutS: 30}` stops a command sooner, in the sandbox.
@@ -107,7 +108,7 @@ it yet.
 
 ```go
 box, err := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{
-	Size:   "4x8", // 2x4, 4x8, 8x16, 16x32; or CPUs + MemMB
+	Size:   "4x8", // 0.25x0.5, 0.5x1, 1x2, 2x4, 4x8, 8x16, 16x32; or CPUs + MemMB
 	Image:  "kosa8-template/universal-24.04-20261115.2",
 	Docker: true, // run dockerd inside; implies Persistent
 	Env:    map[string]string{"NODE_ENV": "production"},
@@ -122,6 +123,23 @@ _ = cloud.Snapshots.Delete(ctx, snap.ID)                   // also List, Get
 
 Also `DiskGB`, `Persistent`, `CPU: "dedicated"`, `Region` (`us`, `eu` or a region id), `Secrets`
 (names) and `Egress`. `CloudListOptions` takes `Name` and `Labels`.
+
+Small sizes, for fleets of mostly idle sandboxes (RL rollouts, evals): a fraction of a vCPU
+reserved and billed, bursting to a whole one while the host is idle. Only a sandbox create takes
+them (`kosa8.CloudSmallSizes`), and only where a host offers them; elsewhere the create answers
+400 `invalid_size` with the sizes you can use.
+
+```go
+tiny, err := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{
+	Template: "python", CPUs: 0.25, MemMB: 512, // or Size: "0.25x0.5"
+	TTLSeconds: 600,
+})
+```
+
+A sandbox may run on kosa8's overflow capacity (Cloudflare Containers; `box.Overflow()`, region
+`cf-auto`). It has no fork, checkpoints, rewind, snapshots, file links or sleep (idle, it is
+ended): those calls return the server's 501 `not_available` with its reason
+(`errors.Is(err, kosa8.ErrUnsupported)`, not retried). Background commands work there.
 
 ### Background commands, previews, terminal
 
@@ -257,6 +275,54 @@ userCloud, _ := kosa8.NewCloud(kosa8.CloudOptions{APIKey: tok.Secret}) // k8c_to
 // also Tokens.List, Tokens.Revoke
 ```
 
+### Browsers, AI gateway, hosted jobs, benchmarks
+
+```go
+// A headless browser ($0.12 per browser-hour, billed per second), driven over CDP.
+br, _ := cloud.Browsers.Create(ctx, kosa8.CloudBrowserOptions{TTLS: 120})
+defer br.Close(ctx)
+png, _ := br.Screenshot(ctx, "https://example.com", false)
+cdp, _ := br.CDPEndpoint(ctx) // wss://api.kosa8.com/v1/browsers/{id}/cdp?token=... (chromedp, Playwright)
+
+// The AI gateway: provider keys kept server-side; point a client at GatewayURL.
+_, _ = cloud.AI.SetKey(ctx, "anthropic", key)
+base := cloud.AI.GatewayURL("anthropic") // https://api.kosa8.com/v1/ai/gw/anthropic/, API key = a kosa8 key
+use, _ := cloud.AI.Usage(ctx, "")        // also Settings, UpdateSettings, Keys, DeleteKey, Call
+
+// A hosted job: kosa8 runs every rollout server-side, graded sealed, into an RL run.
+job, _ := cloud.Jobs.Submit(ctx, kosa8.CloudJobOptions{
+	Name: "eval", Template: "python", Tasks: tasks,
+	Solver: kosa8.CloudJobCmd{Cmd: []string{"python /workspace/solve.py"}, TimeoutS: 1800},
+	Grader: kosa8.CloudJobCmd{Cmd: []string{"pytest -q /hidden/test.py"}, Files: hidden},
+	Concurrency: 64, BudgetUSD: 20,
+})
+job, _ = cloud.Jobs.Wait(ctx, job.ID, 0, nil) // also Estimate, Get, List, Cancel
+
+bs, _ := cloud.Benchmarks.List(ctx) // also Get, Instances, Instance, Prepare
+```
+
+### More of the org
+
+- `Recordings` (List, Link, Delete; `box.Recordings`), `box.Embeds()` (Create, List, Revoke),
+  `box.Previews().Domains(port)` and `cloud.PreviewDomains(previewID)` (custom domains: List, Add,
+  Get, Remove).
+- `APIKeys` (List, Create, Revoke, Rotate), `Webhooks` (List, Create, Delete, Deliveries, Test),
+  `Audit` (List, Verify, Export, ExportEvents).
+- `Limits`, `RequestLimit`, `UsageInsights`, `Pricing`, `Burst`, `ActivateBurst`, `OrgEgress`,
+  `SetOrgEgress`, `Checkpoints`, `Lineage`, `Images`, `Functions.Invocations`, `CompareRuns`,
+  `RLAlerts` (List, Create, Update, Delete), `AttackScorecards`.
+- `box.StopBackground(ctx, execID)` stops a background command.
+
+### Retries
+
+Every Cloud request is retried with exponential backoff and full jitter (3 tries by default,
+`CloudOptions.Retry`), waiting at least the `Retry-After` header or the body's `retry_after`:
+
+- reads, deletes and puts on infra failures and on any answer with `retryable: true`;
+- creates, batches, forks, grades and job submits, which carry an `Idempotency-Key`;
+- any request, a POST too, answered 429, 503 `database_busy` or 409 `template_building`: the
+  cloud refused it before acting on it.
+
 ### Cloud errors
 
 Every error is a `*kosa8.Error`; `kosa8.AsError(err)` gives its `Status`, the cloud's stable `Code`
@@ -295,8 +361,8 @@ that catch people switching:
 | files | `box.files.write` / `read_text` / `list` | `box.files.write` / `readText` / `list` | `box.Files().WriteString` / `ReadText` / `List(ctx, "")` | `box.files.write` / `read_text` / `list` | `box.files().write` / `readText` / `list()` |
 | no such sandbox | `Kosa8NotFoundError` | `Kosa8NotFoundError` | `*kosa8.Error` with `Kind` `KindNotFound` (`errors.Is(err, kosa8.ErrNotFound)`) | `Kosa8::NotFoundError` | `Kosa8Exception.NotFoundException` |
 
-In every SDK a non-zero exit is returned in the result, not raised. Only `/workspace` is sure to
-persist between commands, unless the sandbox is persistent.
+In every SDK a non-zero exit is returned in the result, not raised. Each exec is a fresh process;
+files in `/workspace` persist for the sandbox's life; installed packages need a persistent sandbox.
 
 ## Local daemon
 

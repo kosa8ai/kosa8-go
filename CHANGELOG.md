@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.1 - 2026-11-22
+
+The 0.6 release of the five SDKs. Go is v0.6.1, not v0.6.0: a `v0.6.0` tag was pushed by mistake on
+the 0.5.3 code and the Go checksum database keeps it, so it cannot be replaced; `go.mod` retracts
+v0.6.0.
+
+- **Full Cloud API coverage** (Go was the "core" tier; it now carries what Python and JS have, and more):
+  - Browsers: `Cloud.Browsers` (Create, List, Get, Delete), `CloudBrowser.Page`, `Screenshot`,
+    `Refresh`, `Close`, `CDPEndpoint` (the `/v1/browsers/{id}/cdp` WebSocket URL).
+  - AI gateway: `Cloud.AI` (Settings, UpdateSettings, Keys, SetKey, DeleteKey, Usage, `GatewayURL`
+    for pointing OpenAI/Anthropic clients at `/v1/ai/gw/{provider}/`, and `Call` for one model call).
+  - Hosted jobs: `Cloud.Jobs` (Submit with an Idempotency-Key, Estimate, Get, List, Cancel, Wait).
+  - Benchmarks: `Cloud.Benchmarks` (List, Get, Instances, Instance, Prepare).
+  - Recordings (`Cloud.Recordings`, `CloudSandbox.Recordings`), embeds (`CloudSandbox.Embeds()`),
+    custom preview domains (`CloudPreviews.Domains(port)`, `Cloud.PreviewDomains(id)`).
+  - `Cloud.APIKeys`, `Cloud.Webhooks`, `Cloud.Audit`, `Cloud.RLAlerts`, `Cloud.CompareRuns`.
+  - `Cloud.Limits`, `RequestLimit`, `UsageInsights`, `Pricing`, `Burst`, `ActivateBurst`,
+    `OrgEgress`, `SetOrgEgress`, `Checkpoints`, `Lineage`, `Images`, `AttackScorecards`,
+    `AttackScorecard`, `UploadAttackScorecard`, `Functions.Invocations`,
+    `CloudSandbox.StopBackground`.
+- **Small sizes**: `CloudCreateOptions.CPUs` is a `float64` (0.25, 0.5, 1 with MemMB 512, 1024,
+  2048), and `Size` takes `0.25x0.5`, `0.5x1` and `1x2` (`CloudSmallSizes`; `CloudStandardSizes`
+  for templates). `CloudSnapshot.CPUs` and `CloudMetrics.CPUs` are `float64` too, so a small
+  sandbox's 0.25 decodes. Source change: an `int` variable assigned to `CPUs` needs a conversion.
+- **Overflow honesty**: `CloudSandbox.Overflow()` (region `cf-auto`, Cloudflare Containers). Fork,
+  checkpoints, rewind, snapshots and file links there return the server's 501 `not_available` as
+  `ErrUnsupported`, not retried.
+- **Retries**: every request, POSTs included, is retried on 429, 503 `database_busy` and 409
+  `template_building` (refused before the cloud acted on it), with backoff and full jitter, waiting
+  at least `Retry-After` or the body's `retry_after` / `retry_after_s`. Reads, puts and deletes
+  also retry any answer with `retryable: true`. Streamed downloads and uploads (a seekable body)
+  retry the same way. `database_busy` is infra and retryable; `template_building` and
+  `idempotency_in_progress` are infra and retryable; a 4xx `invalid_*` / `bad_*` / `missing_*` /
+  `unknown_*` code is client, as the server's failures.js says.
+- README: `go get github.com/kosa8ai/kosa8-go@v0.6.1`; what persists (each exec is a fresh
+  process, files in `/workspace` persist for the sandbox's life, installed packages need
+  `Persistent: true`); small sizes, overflow, retries and the new groups.
+- Path literals: preview, schedule and code-context deletes, background exec status and pipeline
+  artifact downloads now name their full route in the source, so the SDK parity checker sees them.
+
 ## 0.5.3
 
 - `CloudExecOptions.TimeoutS` (1..90; `CloudExecMaxTimeoutS`): the API's exec `timeout_s`, which stops the command in the sandbox when it runs that long and answers `ErrExecTimeout` (without the hint about the 90 s buffered limit). Python, JS, Ruby and Java have the same option. Any other value is an `ErrUsage` before the call.
@@ -21,7 +61,7 @@
 
 - Failure class `oom`: exit 137 with the guest kernel's OOM count raised (kosa8 Cloud reports it on exec and grade; a grade killed for memory has no reward). It can be added to a rollout mask.
 
-## 0.5.0 — unreleased
+## 0.5.0
 
 RL training and fan-out on kosa8 Cloud, aligned with the Cloud API's RL release and the Python
 SDK's `kosa8.rl`.

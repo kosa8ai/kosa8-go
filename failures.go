@@ -29,10 +29,23 @@ const (
 // running; the same call answers once it is done.
 const codeIdempotencyInProgress = "idempotency_in_progress"
 
+// codeDatabaseBusy (503): kosa8 Cloud's database was overloaded and the
+// request was not acted on; retry_after says when to try again.
+const codeDatabaseBusy = "database_busy"
+
+// codeTemplateBuilding (409): the template (a benchmark instance's
+// environment, say) is still being built; retry_after_s says when to ask
+// again. The create was not acted on.
+const codeTemplateBuilding = "template_building"
+
+// badParamRE: a 4xx code naming a bad parameter is the caller's to fix,
+// whatever it names (invalid_timeout is not a timeout).
+var badParamRE = regexp.MustCompile(`^(invalid|bad|missing|unknown)_`)
+
 var (
 	infraCodes = setOf("host_failed", "not_ready", "no_capacity", "host_unreachable", "host_unavailable", "host_busy",
 		"host_restarting", "wake_failed", "try_again", "internal", "kernel_failed", "egress_failed", "dns_unreachable",
-		"host_lost", "host_removed", "insufficient_storage", "starting")
+		"host_lost", "host_removed", "insufficient_storage", "starting", "database_busy")
 	rateCodes  = setOf("rate_limited", "slow_down", "too_soon")
 	quotaCodes = setOf("quota_exceeded", "running_limit", "plan_required", "plan_limit", "plan_feature", "payment_required",
 		"payment_declined", "spending_cap_reached", "snapshot_limit", "org_frozen", "org_suspended", "too_many_runs")
@@ -55,6 +68,10 @@ func FailureOf(status int, code string) (FailureClass, bool) {
 		return FailureOK, false
 	case code == "exec_timeout":
 		return FailureTimeout, false
+	case code == codeIdempotencyInProgress || code == codeTemplateBuilding:
+		return FailureInfra, true
+	case status < 500 && badParamRE.MatchString(code):
+		return FailureClient, false
 	case timeoutCodeRE.MatchString(code):
 		return FailureTimeout, true
 	case rateCodes[code]:

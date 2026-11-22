@@ -11,6 +11,7 @@ package kosa8
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/url"
 	"strconv"
@@ -291,7 +292,7 @@ func (p *CloudPipelines) Artifacts(ctx context.Context, id string) ([]CloudPipel
 
 // DownloadArtifact streams one artifact (a .tar.gz) into w.
 func (p *CloudPipelines) DownloadArtifact(ctx context.Context, id, job string, idx int, w io.Writer) (int64, error) {
-	resp, err := p.c.stream(ctx, "GET", runPath(id, "/artifacts/"+url.PathEscape(job)+"/"+strconv.Itoa(idx)), "", nil)
+	resp, err := p.c.stream(ctx, "GET", fmt.Sprintf("/v1/pipelines/runs/%s/artifacts/%s/%d", url.PathEscape(id), url.PathEscape(job), idx), "", nil)
 	if err != nil {
 		return 0, err
 	}

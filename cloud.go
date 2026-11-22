@@ -49,10 +49,14 @@ type CloudOptions struct {
 	Timeout    time.Duration       // per request; default 120 s
 	Getenv     func(string) string // for tests; default os.Getenv
 	// Retry is applied to every request where trying again is safe: reads,
-	// deletes, heartbeats and drains on infra failures; the calls that make
-	// sandboxes (create, batch, fork, grade), which carry an Idempotency-Key
-	// reused on each retry; and any request answered 429, waiting at least
-	// its Retry-After. Default DefaultRetryPolicy(); &NoRetry turns it off.
+	// deletes, heartbeats and drains on infra failures and on any answer
+	// with retryable: true; the calls that make sandboxes and jobs (create,
+	// batch, fork, grade, jobs), which carry an Idempotency-Key reused on
+	// each retry; and any request, a POST too, answered 429, 503
+	// database_busy or 409 template_building (the cloud refused it before
+	// acting on it), waiting at least the Retry-After header or the body's
+	// retry_after / retry_after_s. Backoff is exponential with full jitter.
+	// Default DefaultRetryPolicy(); &NoRetry turns it off.
 	Retry *RetryPolicy
 }
 
@@ -72,6 +76,16 @@ type Cloud struct {
 
 	OrgTemplates *CloudOrgTemplates // the org's own templates, built once and restored
 	Tokens       *CloudTokens       // short-lived capability tokens
+
+	Browsers   *CloudBrowsers   // headless browsers over CDP
+	AI         *CloudAI         // the AI gateway: provider keys, settings, usage
+	Jobs       *CloudJobs       // hosted jobs: tasks, a solver and a sealed grader
+	Benchmarks *CloudBenchmarks // ready-made benchmarks and their environments
+	Recordings *CloudRecordings // desktop session recordings
+	APIKeys    *CloudAPIKeys    // the org's API keys
+	Webhooks   *CloudWebhooks   // webhook endpoints
+	Audit      *CloudAudit      // the tamper-evident audit log
+	RLAlerts   *CloudRLAlerts   // alert rules on RL runs
 }
 
 func checkCloudBase(raw string) (string, error) {
@@ -138,6 +152,15 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	c.Snapshots = &CloudSnapshots{c: c}
 	c.Secrets = &CloudSecrets{c: c}
 	c.Pipelines = &CloudPipelines{c: c}
+	c.Browsers = &CloudBrowsers{c: c}
+	c.AI = &CloudAI{c: c}
+	c.Jobs = &CloudJobs{c: c}
+	c.Benchmarks = &CloudBenchmarks{c: c}
+	c.Recordings = &CloudRecordings{c: c}
+	c.APIKeys = &CloudAPIKeys{c: c}
+	c.Webhooks = &CloudWebhooks{c: c}
+	c.Audit = &CloudAudit{c: c}
+	c.RLAlerts = &CloudRLAlerts{c: c}
 	return c, nil
 }
 
@@ -272,15 +295,25 @@ func (c *Cloud) send(ctx context.Context, method, path, contentType string, body
 		if err == nil {
 			return b, nil
 		}
-		e, _ := AsError(err)
-		allowed := safe || (e != nil && e.Status == 429)
-		if !allowed || !c.retry.ShouldRetry(err, attempt) {
+		if !(safe || preExecution(err)) || !c.retry.ShouldRetry(err, attempt) {
 			return nil, err
 		}
 		if sleepCtx(ctx, c.retry.Delay(err, attempt)) != nil {
 			return nil, err
 		}
 	}
+}
+
+// preExecution reports whether err is an answer the cloud gives before it
+// acts on a request, so sending even a non-idempotent POST again is safe:
+// 429 (rate limited), 503 database_busy (its database was overloaded) and
+// 409 template_building (the template is still being built).
+func preExecution(err error) bool {
+	e, ok := AsError(err)
+	if !ok || !e.cloud {
+		return false
+	}
+	return e.Status == 429 || (e.Status == 503 && e.Code == codeDatabaseBusy) || (e.Status == 409 && e.Code == codeTemplateBuilding)
 }
 
 // do sends one request and returns the answer's body; an HTTP error answer
@@ -409,12 +442,21 @@ func cloudError(status int, body any, method, path string) *Error {
 				e.Retryable = e.FailureClass == FailureInfra
 			}
 		}
-		// e.g. 409 idempotency_in_progress {retry_after_s: 2}
-		if ra, ok := m["retry_after_s"].(float64); ok && ra > 0 {
-			e.RetryAfter = time.Duration(ra * float64(time.Second))
+		// The server's word wins: retryable: true (with or without a
+		// failure_class) means the same call may work if sent again.
+		if rt, ok := m["retryable"].(bool); ok && rt {
+			e.Retryable = true
+		}
+		// e.g. 409 idempotency_in_progress {retry_after_s: 2}; 503
+		// database_busy {retry_after: 2}. Seconds; the header wins.
+		for _, k := range []string{"retry_after_s", "retry_after"} {
+			if ra, ok := m[k].(float64); ok && ra > 0 {
+				e.RetryAfter = time.Duration(ra * float64(time.Second))
+				break
+			}
 		}
 	}
-	if code == codeIdempotencyInProgress {
+	if code == codeIdempotencyInProgress || code == codeDatabaseBusy || code == codeTemplateBuilding {
 		e.Retryable = true
 	}
 	switch {
@@ -511,12 +553,17 @@ type CloudCreateOptions struct {
 	// price_not_accepted; a different price answers 409 price_changed.
 	AcceptPrice *float64
 
-	// Size is vCPU x GiB: one of CloudSizes ("2x4", "4x8", "8x16",
-	// "16x32"). A size, CPUs+MemMB, Image or DiskGB boots the sandbox cold
-	// at that size; Create waits for it unless NoWait.
+	// Size is vCPU x GiB: one of CloudSizes. The standard sizes are "2x4",
+	// "4x8", "8x16" and "16x32"; the small sizes "0.25x0.5", "0.5x1" and
+	// "1x2" (a fraction of a vCPU reserved, bursting to a whole one while
+	// the host is idle; for fleets of mostly idle sandboxes) run only where
+	// a host offers them, else the create answers 400 invalid_size naming
+	// what you can use. A size, CPUs+MemMB, Image or DiskGB boots the
+	// sandbox at that size; Create waits for it unless NoWait.
 	Size string
-	// CPUs and MemMB: or name a size by its parts (4 and 8192 for 4x8).
-	CPUs  int
+	// CPUs and MemMB: or name a size by its parts (4 and 8192 for 4x8;
+	// 0.25 and 512 for 0.25x0.5).
+	CPUs  float64
 	MemMB int
 	// Image is an OCI image to run, such as
 	// kosa8-template/universal-24.04-20261115.2 (default size 2x4).
@@ -566,7 +613,16 @@ type CloudCreateOptions struct {
 }
 
 // CloudSizes are the sizes a sized create takes (vCPU x GiB).
-var CloudSizes = []string{"2x4", "4x8", "8x16", "16x32"}
+var CloudSizes = []string{"0.25x0.5", "0.5x1", "1x2", "2x4", "4x8", "8x16", "16x32"}
+
+// CloudSmallSizes are the sizes below the standard 2x4: a fraction of a
+// vCPU reserved (billed as that fraction), bursting while the host is idle.
+// Only a sandbox create takes them, and only where a host offers them.
+var CloudSmallSizes = []string{"0.25x0.5", "0.5x1", "1x2"}
+
+// CloudStandardSizes are 2x4 and up: what templates, pipelines and every
+// other sized path take.
+var CloudStandardSizes = []string{"2x4", "4x8", "8x16", "16x32"}
 
 func checkSleepAfter(v *int) error {
 	if v != nil && (*v < 0 || *v > CloudMaxSleepAfterS) {
@@ -785,6 +841,21 @@ func (b *CloudSandbox) String() string {
 func (b *CloudSandbox) path(suffix string) string {
 	return "/v1/sandboxes/" + url.PathEscape(b.Info.ID) + suffix
 }
+
+// OverflowRegion is the region of a sandbox placed on kosa8's overflow
+// capacity (Cloudflare Containers).
+const OverflowRegion = "cf-auto"
+
+// Overflow reports whether the sandbox runs on overflow capacity (region
+// cf-auto). Such a sandbox has no fork, checkpoints, rewind, snapshots, file
+// links or sleep (idle, it is ended): those calls answer 501 not_available
+// (ErrUnsupported) with the server's reason, which the SDK passes on as is.
+func (b *CloudSandbox) Overflow() bool {
+	return b.Info.Region != nil && *b.Info.Region == OverflowRegion
+}
+
+// eid is the sandbox's id, escaped for a path.
+func (b *CloudSandbox) eid() string { return url.PathEscape(b.Info.ID) }
 
 // CloudExecOptions are optional settings for CloudSandbox.Exec.
 type CloudExecOptions struct {
