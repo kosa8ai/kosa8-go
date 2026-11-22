@@ -5,7 +5,7 @@ your own machine. Standard library only.
 Method for method it matches [`@kosa8/sdk`](https://github.com/kosa8ai/kosa8-js) (TypeScript) and `kosa8` (Python).
 
 ```sh
-go get github.com/kosa8ai/kosa8-go@v0.5.0
+go get github.com/kosa8ai/kosa8-go@latest
 ```
 
 ## kosa8 Cloud quickstart
@@ -69,10 +69,17 @@ another address. These snippets are compiled as examples in `example_test.go`.
 
 - The default template, `base`, is Alpine Linux. `sh` is busybox: there is no bash, python or git.
   For Python create with `Template: "python"` (or another key from `cloud.Templates(ctx)`).
-- Each exec runs in a fresh container; only `/workspace` persists between calls. Install packages
-  into `/workspace`.
+- Only `/workspace` is sure to persist between calls. An exec may run in a fresh container, so `cd`,
+  `export`, processes it leaves running and anything installed outside `/workspace` may be gone by
+  the next one. Install packages into `/workspace`, or create with `Persistent: true` (one
+  long-lived container) to keep the whole filesystem and background processes; the code
+  interpreter (`RunCode`) needs it, and it counts against your plan's persistent-sandbox limit.
 - A buffered exec runs at most **90 s** (`ErrExecTimeout`). Run long jobs in the background
   and poll: `box.ExecShell(ctx, "nohup make test > /workspace/test.log 2>&1 &", nil)`.
+  `&kosa8.CloudExecOptions{TimeoutS: 30}` stops a command sooner, in the sandbox.
+- `box.ID()` is a method: `fmt.Println(box.ID)` without the call prints a func value (`go vet`
+  reports "func value, not called"). `r.ExitCode` is an `*int`, nil when the cloud sent no exit
+  status; check it, or use `r.OK()`.
 - A request body is at most 64 KiB (413 `too_large`); a file read or write is at most 8 MiB.
 
 ### Data plane: files, checkpoints, rewind, fork, ports
@@ -268,6 +275,28 @@ Each also has `e.FailureClass` (`infra`, `quota`, `client`, `timeout`) and `e.Re
 
 A new organization runs nothing until a payment method is on file; until then creating a sandbox
 fails with `ErrPaymentRequired`.
+
+## The same thing in each language
+
+The five kosa8 SDKs (Python `kosa8`, JS `@kosa8/sdk`, Go `kosa8-go`, Ruby `kosa8`, Java
+`com.kosa8:kosa8`) call the same kosa8 Cloud API, but some names differ by language. The ones
+that catch people switching:
+
+| | Python | JS / TS | Go | Ruby | Java |
+|---|---|---|---|---|---|
+| client | `Kosa8Cloud()` | `new Kosa8Cloud()` | `kosa8.NewCloud(kosa8.CloudOptions{})`, returns `(cloud, err)` | `Kosa8::Cloud.new` | `Kosa8Cloud.builder().build()` |
+| lifetime on create | `ttl_s=3600` | `{ ttlS: 3600 }` | `CloudCreateOptions{TTLSeconds: 3600}` | `ttl_s: 3600` | `new CloudOptions.Create().ttlSeconds(3600)` |
+| persistent sandbox | `persistent=True` | `{ persistent: true }` | `CloudCreateOptions{Persistent: true}` | `persistent: true` | `.persistent(true)` |
+| sandbox id | `box.id` | `box.id` | `box.ID()`, a method (`fmt.Println(box.ID)` prints a func value; `go vet` reports it) | `box.id` | `box.id()` |
+| shell command | `box.exec("ls /")` | `box.exec('ls /')` | `box.ExecShell(ctx, "ls /", nil)` | `box.exec("ls /")` | `box.exec("ls /")` |
+| argv command | `box.exec(["ls", "/"])` | `box.exec(['ls', '/'])` | `box.Exec(ctx, []string{"ls", "/"}, nil)` | `box.exec(["ls", "/"])` | `box.exec(List.of("ls", "/"))` |
+| per-exec timeout | `exec(cmd, timeout_s=30)` | `exec(cmd, { timeoutS: 30 })` | `&kosa8.CloudExecOptions{TimeoutS: 30}` | `exec(cmd, timeout_s: 30)` | `exec(cmd, null, null, 30)` |
+| exit code | `r.exit_code` | `r.exitCode` | `r.ExitCode`, an `*int` (nil when the cloud sent none; `r.OK()` checks for 0) | `r.exit_code` | `r.exitCode()`, an `Integer` (may be null) |
+| files | `box.files.write` / `read_text` / `list` | `box.files.write` / `readText` / `list` | `box.Files().WriteString` / `ReadText` / `List(ctx, "")` | `box.files.write` / `read_text` / `list` | `box.files().write` / `readText` / `list()` |
+| no such sandbox | `Kosa8NotFoundError` | `Kosa8NotFoundError` | `*kosa8.Error` with `Kind` `KindNotFound` (`errors.Is(err, kosa8.ErrNotFound)`) | `Kosa8::NotFoundError` | `Kosa8Exception.NotFoundException` |
+
+In every SDK a non-zero exit is returned in the result, not raised. Only `/workspace` is sure to
+persist between commands, unless the sandbox is persistent.
 
 ## Local daemon
 

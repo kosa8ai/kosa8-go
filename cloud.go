@@ -422,7 +422,10 @@ func cloudError(status int, body any, method, path string) *Error {
 		e.Kind = KindOrgFrozen
 	case isExecTimeout(status, code, path, e.Message):
 		e.Kind = KindExecTimeout
-		e.Message += " (" + execTimeoutHint + ")"
+		// Its own TimeoutS needs no hint about the 90 s buffered limit.
+		if !strings.Contains(e.Message, "timeout_s") {
+			e.Message += " (" + execTimeoutHint + ")"
+		}
 	}
 	return e
 }
@@ -767,7 +770,9 @@ type CloudSandbox struct {
 	c    *Cloud
 }
 
-// ID is the sandbox id.
+// ID is the sandbox id. It is a method, unlike box.id in the other SDKs:
+// write box.ID(), not box.ID (fmt.Println(box.ID) prints a func value, which
+// go vet reports as "func value, not called"). Info.ID holds the same id.
 func (b *CloudSandbox) ID() string { return b.Info.ID }
 
 // State is the state as of the last call.
@@ -785,7 +790,15 @@ func (b *CloudSandbox) path(suffix string) string {
 type CloudExecOptions struct {
 	Image string            // default the template's own image
 	Env   map[string]string // sent as K=V, sorted by key
+	// TimeoutS stops the command in the sandbox after this many seconds
+	// (1..90, the API's timeout_s; 0 means none, so the 90 s buffered limit
+	// applies). A stopped command is an ErrExecTimeout.
+	TimeoutS int
 }
+
+// CloudExecMaxTimeoutS is the longest CloudExecOptions.TimeoutS: a buffered
+// exec is held to 90 s whatever it says.
+const CloudExecMaxTimeoutS = 90
 
 // CloudExecResult is a finished cloud command.
 type CloudExecResult struct {
@@ -805,8 +818,8 @@ func (r CloudExecResult) OK() bool { return r.ExitCode != nil && *r.ExitCode == 
 
 // Exec runs argv and waits for it. A sleeping sandbox wakes for it.
 //
-// Each exec runs in a fresh container; only /workspace persists between
-// calls. The Cloud API stops a buffered exec after 90 s (that is
+// Only /workspace is sure to persist between calls: an exec may run in a
+// fresh container, unless the sandbox was created Persistent. The Cloud API stops a buffered exec after 90 s (that is
 // ErrExecTimeout): run long jobs in the background (nohup ... & writing to
 // /workspace) and poll. The request body is capped at 64 KiB (413
 // too_large). ExitCode is nil when the cloud reports no exit status, so
@@ -822,6 +835,12 @@ func (b *CloudSandbox) Exec(ctx context.Context, argv []string, o *CloudExecOpti
 		}
 		if len(o.Env) > 0 {
 			body["env"] = envList(o.Env)
+		}
+		if o.TimeoutS != 0 {
+			if o.TimeoutS < 1 || o.TimeoutS > CloudExecMaxTimeoutS {
+				return CloudExecResult{}, usage("TimeoutS must be 1..%d, not %d", CloudExecMaxTimeoutS, o.TimeoutS)
+			}
+			body["timeout_s"] = o.TimeoutS
 		}
 	}
 	var r struct {
