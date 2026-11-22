@@ -18,6 +18,7 @@ const (
 	FailureOK          FailureClass = "ok"           // the call worked (an exec that exited 0)
 	FailureExitNonzero FailureClass = "exit_nonzero" // the command ran and exited non-zero: the caller's code
 	FailureTimeout     FailureClass = "timeout"      // the command ran past its limit
+	FailureOOM         FailureClass = "oom"          // exit 137 and the guest kernel killed for memory
 	FailureInfra       FailureClass = "infra"        // a host failed, had no room or went away; 5xx
 	FailureQuota       FailureClass = "quota"        // a plan, running, payment or spending-cap limit, or a rate limit
 	FailureClient      FailureClass = "client"       // the request was wrong: 400, 404, 409, 410, 413, 422
