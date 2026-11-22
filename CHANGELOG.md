@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.3
 
 - `CloudExecOptions.TimeoutS` (1..90; `CloudExecMaxTimeoutS`): the API's exec `timeout_s`, which stops the command in the sandbox when it runs that long and answers `ErrExecTimeout` (without the hint about the 90 s buffered limit). Python, JS, Ruby and Java have the same option. Any other value is an `ErrUsage` before the call.
 - README: `go get github.com/kosa8ai/kosa8-go@latest` (it said `@v0.5.0`); what persists between commands (only `/workspace`, unless the sandbox is persistent) matches the server; `box.ID()` is a method (`go vet` reports `fmt.Println(box.ID)`), and `ExitCode` is a pointer; a "same thing in each language" table for the five SDKs.
