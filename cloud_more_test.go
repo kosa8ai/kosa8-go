@@ -283,12 +283,17 @@ func TestCloudMoreRoutes(t *testing.T) {
 		}},
 		{"DELETE /v1/browsers/brw_1", func() error { return c.Browsers.Delete(ctx, "brw_1") }},
 		{"GET /v1/ai/settings", func() error { _, err := c.AI.Settings(ctx); return err }},
-		{"PATCH /v1/ai/settings", func() error { _, err := c.AI.UpdateSettings(ctx, CloudAISettingsUpdate{Enabled: Ptr(true)}); return err }},
+		{"PATCH /v1/ai/settings", func() error {
+			_, err := c.AI.UpdateSettings(ctx, CloudAISettingsUpdate{Enabled: Ptr(true)})
+			return err
+		}},
 		{"GET /v1/ai/keys", func() error { _, err := c.AI.Keys(ctx); return err }},
 		{"PUT /v1/ai/keys/openai", func() error { _, err := c.AI.SetKey(ctx, "openai", "sk-x"); return err }},
 		{"DELETE /v1/ai/keys/openai", func() error { return c.AI.DeleteKey(ctx, "openai") }},
 		{"GET /v1/ai/usage?month=2026-11", func() error { _, err := c.AI.Usage(ctx, "2026-11"); return err }},
-		{"POST /v1/ai/gw/openai/v1/chat/completions", func() error { return c.AI.Call(ctx, "openai", "/v1/chat/completions", map[string]any{"model": "m"}, nil) }},
+		{"POST /v1/ai/gw/openai/v1/chat/completions", func() error {
+			return c.AI.Call(ctx, "openai", "/v1/chat/completions", map[string]any{"model": "m"}, nil)
+		}},
 		{"POST /v1/jobs", func() error {
 			j, err := c.Jobs.Submit(ctx, CloudJobOptions{Name: "j", Template: "python", Tasks: []CloudJobTask{{ID: "1", Files: map[string][]byte{"/a": []byte("x")}}},
 				Solver: CloudJobCmd{Cmd: []string{"python solve.py"}, TimeoutS: 60}, Grader: CloudJobCmd{Cmd: []string{"pytest"}}})
@@ -324,7 +329,10 @@ func TestCloudMoreRoutes(t *testing.T) {
 			_, err := c.RLAlerts.Create(ctx, CloudRLAlertSpec{Kind: "reward_below", Threshold: 0.1})
 			return err
 		}},
-		{"PATCH /v1/rl/alerts/al_1", func() error { _, err := c.RLAlerts.Update(ctx, "al_1", CloudRLAlertUpdate{Enabled: Ptr(false)}); return err }},
+		{"PATCH /v1/rl/alerts/al_1", func() error {
+			_, err := c.RLAlerts.Update(ctx, "al_1", CloudRLAlertUpdate{Enabled: Ptr(false)})
+			return err
+		}},
 		{"DELETE /v1/rl/alerts/al_1", func() error { return c.RLAlerts.Delete(ctx, "al_1") }},
 		{"GET /v1/usage/insights", func() error { _, err := c.UsageInsights(ctx); return err }},
 		{"GET /v1/limits", func() error { _, err := c.Limits(ctx); return err }},
@@ -345,7 +353,10 @@ func TestCloudMoreRoutes(t *testing.T) {
 		{"POST /v1/api-keys/key_1/rotate", func() error { _, err := c.APIKeys.Rotate(ctx, "key_1", 60); return err }},
 		{"GET /v1/functions/f/invocations?limit=5", func() error { _, err := c.Functions.Invocations(ctx, "f", 5); return err }},
 		{"GET /v1/webhooks", func() error { _, _, err := c.Webhooks.List(ctx); return err }},
-		{"POST /v1/webhooks", func() error { _, err := c.Webhooks.Create(ctx, "https://h", []string{"sandbox.created"}, ""); return err }},
+		{"POST /v1/webhooks", func() error {
+			_, err := c.Webhooks.Create(ctx, "https://h", []string{"sandbox.created"}, "")
+			return err
+		}},
 		{"DELETE /v1/webhooks/wh_1", func() error { return c.Webhooks.Delete(ctx, "wh_1") }},
 		{"GET /v1/webhooks/wh_1/deliveries", func() error { _, err := c.Webhooks.Deliveries(ctx, "wh_1", 0); return err }},
 		{"POST /v1/webhooks/wh_1/test", func() error { _, err := c.Webhooks.Test(ctx, "wh_1"); return err }},
@@ -356,7 +367,10 @@ func TestCloudMoreRoutes(t *testing.T) {
 		{"POST /v1/recordings/rec_1/link", func() error { _, err := c.Recordings.Link(ctx, "rec_1", 900); return err }},
 		{"DELETE /v1/recordings/rec_1", func() error { return c.Recordings.Delete(ctx, "rec_1") }},
 		{"GET /v1/sandboxes/sbx_1/recordings", func() error { _, err := b.Recordings(ctx); return err }},
-		{"POST /v1/sandboxes/sbx_1/embed", func() error { _, err := b.Embeds().Create(ctx, CloudEmbedOptions{Origins: []string{"https://a"}}); return err }},
+		{"POST /v1/sandboxes/sbx_1/embed", func() error {
+			_, err := b.Embeds().Create(ctx, CloudEmbedOptions{Origins: []string{"https://a"}})
+			return err
+		}},
 		{"GET /v1/sandboxes/sbx_1/embeds", func() error { _, err := b.Embeds().List(ctx); return err }},
 		{"DELETE /v1/sandboxes/sbx_1/embeds/emb_1", func() error { return b.Embeds().Revoke(ctx, "emb_1") }},
 		{"POST /v1/sandboxes/sbx_1/previews/3000/domains", func() error { _, err := b.Previews().Domains(3000).Add(ctx, "a.example.com", ""); return err }},
