@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.2 — unreleased
+
+- **Actionable Cloud errors**: a kosa8 Cloud API error's `Error()` is the server's sentence followed by
+  `[HTTP <status> <code>; retry in <n> s; request <id>]` (and `; upgrade: <url>` on a 402 whose
+  sentence lacks it). `Message` stays the bare sentence; daemon errors are unchanged.
+- New `Error.RequestID`: the answer's `X-Request-Id`, else Cloudflare's `cf-ray`; quote it to support.
+- A 401 says how to fix the key (set `KOSA8_API_KEY` or `CloudOptions.APIKey`; make one at
+  https://app.kosa8.com/app#keys). A missing or malformed key, a timeout (try again or raise
+  `CloudOptions.Timeout`) and an unreachable API (check the network and `KOSA8_CLOUD_URL`) say what to do next.
+- Fix: a streamed download's error no longer drops the body's `retry_after_s` when the answer had no
+  Retry-After header.
+
 ## 0.5.1
 
 - Failure class `oom`: exit 137 with the guest kernel's OOM count raised (kosa8 Cloud reports it on exec and grade; a grade killed for memory has no reward). It can be added to a rollout mask.

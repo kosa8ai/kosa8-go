@@ -522,14 +522,12 @@ func (c *Cloud) stream(ctx context.Context, method, path, contentType string, bo
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		return nil, &Error{Kind: KindConnection, Message: fmt.Sprintf("could not reach kosa8 Cloud at %s: %v", c.baseURL, err), Method: method, Path: path, Err: err}
+		return nil, c.unreachable(method, path, err)
 	}
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
-		e := cloudError(resp.StatusCode, decodeBody(b), method, path)
-		e.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
-		return nil, e
+		return nil, withHeaders(cloudError(resp.StatusCode, decodeBody(b), method, path), resp.Header)
 	}
 	return resp, nil
 }
