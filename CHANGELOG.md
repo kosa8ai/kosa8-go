@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.2 — unreleased
+## 0.5.2
 
 - **Actionable Cloud errors**: a kosa8 Cloud API error's `Error()` is the server's sentence followed by
   `[HTTP <status> <code>; retry in <n> s; request <id>]` (and `; upgrade: <url>` on a 402 whose
