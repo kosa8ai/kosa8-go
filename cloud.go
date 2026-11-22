@@ -102,10 +102,10 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return nil, usage("no kosa8 Cloud API key: pass CloudOptions.APIKey or set KOSA8_API_KEY")
+		return nil, usage("no kosa8 Cloud API key: %s", keyHint)
 	}
 	if !strings.HasPrefix(key, CloudKeyPrefix) && !strings.HasPrefix(key, CloudTokenPrefix) {
-		return nil, usage("a kosa8 Cloud API key starts with %s (a capability token with %s)", CloudKeyPrefix, CloudTokenPrefix)
+		return nil, usage("a kosa8 Cloud API key starts with %s (a capability token with %s); copy the whole key from https://app.kosa8.com/app#keys", CloudKeyPrefix, CloudTokenPrefix)
 	}
 	base := o.BaseURL
 	if base == "" {
@@ -317,12 +317,12 @@ func (c *Cloud) once(ctx context.Context, method, path, contentType string, body
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &Error{Kind: KindTimeout, Message: fmt.Sprintf("kosa8 Cloud did not answer %s %s in time", method, path), Method: method, Path: path, Err: err}
+			return nil, &Error{Kind: KindTimeout, Message: fmt.Sprintf("kosa8 Cloud did not answer %s %s within %s; try again, or raise CloudOptions.Timeout", method, path, c.timeout), Method: method, Path: path, Err: err}
 		}
 		if errors.Is(err, context.Canceled) {
 			return nil, err
 		}
-		return nil, &Error{Kind: KindConnection, Message: fmt.Sprintf("could not reach kosa8 Cloud at %s: %v", c.baseURL, err), Method: method, Path: path, Err: err}
+		return nil, c.unreachable(method, path, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
@@ -330,13 +330,28 @@ func (c *Cloud) once(ctx context.Context, method, path, contentType string, body
 		return nil, &Error{Kind: KindConnection, Message: fmt.Sprintf("read %s %s: %v", method, path, err), Method: method, Path: path, Err: err}
 	}
 	if resp.StatusCode >= 400 {
-		e := cloudError(resp.StatusCode, decodeBody(b), method, path)
-		if ra := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ra > 0 {
-			e.RetryAfter = ra
-		}
-		return nil, e
+		return nil, withHeaders(cloudError(resp.StatusCode, decodeBody(b), method, path), resp.Header)
 	}
 	return b, nil
+}
+
+// unreachable is the error for a request that got no answer.
+func (c *Cloud) unreachable(method, path string, err error) *Error {
+	return &Error{Kind: KindConnection, Method: method, Path: path, Err: err,
+		Message: fmt.Sprintf("could not reach kosa8 Cloud at %s: %v; check the network connection and KOSA8_CLOUD_URL, then try again", c.baseURL, err)}
+}
+
+// withHeaders adds an error answer's Retry-After (over the body's
+// retry_after_s) and request id to e.
+func withHeaders(e *Error, h http.Header) *Error {
+	if ra := parseRetryAfter(h.Get("Retry-After"), time.Now()); ra > 0 {
+		e.RetryAfter = ra
+	}
+	e.RequestID = h.Get("X-Request-Id")
+	if e.RequestID == "" {
+		e.RequestID = h.Get("Cf-Ray")
+	}
+	return e
 }
 
 // parseRetryAfter reads a Retry-After header: seconds, or an HTTP date.
@@ -383,6 +398,7 @@ func cloudError(status int, body any, method, path string) *Error {
 	e.Body = body
 	e.UpgradeURL = upgrade
 	e.AgentMessage = agent
+	e.cloud = true
 	e.FailureClass, e.Retryable = FailureOf(status, code)
 	if m, ok := body.(map[string]any); ok {
 		if fc, ok := m["failure_class"].(string); ok && fc != "" {

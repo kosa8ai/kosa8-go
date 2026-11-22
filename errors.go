@@ -3,6 +3,7 @@ package kosa8
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +39,13 @@ type Error struct {
 	// ClassifyFailure, which also covers errors without them).
 	FailureClass FailureClass
 	Retryable    bool
+	// RequestID identifies the request to kosa8 support: the answer's
+	// X-Request-Id header, else Cloudflare's cf-ray. Empty when absent.
+	RequestID string
+
+	// cloud marks an error answer from the kosa8 Cloud API, whose Error()
+	// adds the status, code, wait and request id to the sentence.
+	cloud bool
 }
 
 // Kind classifies an Error.
@@ -63,7 +71,42 @@ const (
 	KindUsage            Kind = "usage" // bad arguments
 )
 
-func (e *Error) Error() string { return e.Message }
+// Error is the message; for a kosa8 Cloud API answer it is followed by what
+// to do about a refused key and by the status, code, wait and request id:
+//
+//	kosa8 Cloud has no room right now [HTTP 503 no_capacity; retry in 10 s; request a5e7...-BOS]
+func (e *Error) Error() string {
+	if !e.cloud {
+		return e.Message
+	}
+	var b strings.Builder
+	b.WriteString(e.Message)
+	if e.Status == 401 {
+		b.WriteString(" (" + keyHint + ")")
+	}
+	b.WriteString(" [HTTP ")
+	b.WriteString(strconv.Itoa(e.Status))
+	if e.Code != "" {
+		b.WriteString(" " + e.Code)
+	}
+	if e.RetryAfter > 0 {
+		b.WriteString("; retry in " + strconv.FormatFloat(e.RetryAfter.Seconds(), 'f', -1, 64) + " s")
+	} else if e.Retryable {
+		b.WriteString("; retryable")
+	}
+	if e.UpgradeURL != "" && !strings.Contains(e.Message, e.UpgradeURL) {
+		b.WriteString("; upgrade: " + e.UpgradeURL)
+	}
+	if e.RequestID != "" {
+		b.WriteString("; request " + e.RequestID)
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+// keyHint is what to do about a missing or refused API key.
+const keyHint = "set KOSA8_API_KEY or pass CloudOptions.APIKey; make a key at https://app.kosa8.com/app#keys"
+
 func (e *Error) Unwrap() error { return e.Err }
 
 // Is lets errors.Is(err, kosa8.ErrNotFound) and friends work.
