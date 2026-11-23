@@ -1,4 +1,5 @@
-// Package kosa8 is the Go SDK for kosa8: microVM sandboxes for AI agents.
+// Package kosa8 is the Go SDK for kosa8, Zero Trust cybersecurity
+// infrastructure for AI agents: each agent in its own microVM.
 //
 // It talks to the local kosa8 daemon over its unix socket
 // (~/.kosa8/run/kosa8.sock), to a remote worker via KOSA8_HOST and
