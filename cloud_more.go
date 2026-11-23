@@ -573,12 +573,8 @@ func (s *CloudJobs) Submit(ctx context.Context, o CloudJobOptions) (CloudJob, er
 	if err != nil {
 		return CloudJob{}, err
 	}
-	key := o.IdempotencyKey
-	if key == "" {
-		key = NewIdempotencyKey()
-	}
 	var r Info
-	if err := s.c.requestKeyed(ctx, "POST", "/v1/jobs", body, &r, key); err != nil {
+	if err := s.c.requestKeyed(ctx, "POST", "/v1/jobs", body, &r, o.IdempotencyKey); err != nil {
 		return CloudJob{}, err
 	}
 	return jobOf(r), nil

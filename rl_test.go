@@ -333,7 +333,8 @@ func TestIdempotencyKeyReusedOnRetry(t *testing.T) {
 		t.Fatalf("%v %v", b, err)
 	}
 	rs := f.reqs("POST", "/v1/sandboxes")
-	if len(rs) != 2 || rs[0].Key == "" || rs[0].Key != rs[1].Key || len(rs[0].Key) != 36 {
+	// The SDK's own key is renewed after a 5xx: the retry is a new attempt.
+	if len(rs) != 2 || rs[0].Key == "" || rs[0].Key == rs[1].Key || len(rs[0].Key) != 36 || len(rs[1].Key) != 36 {
 		t.Fatalf("keys %q %q", rs[0].Key, rs[len(rs)-1].Key)
 	}
 	if rs[0].Body["lease_s"] != 300.0 {

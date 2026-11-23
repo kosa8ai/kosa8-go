@@ -242,7 +242,8 @@ type CloudForkOptions struct {
 	// all or nothing. The API's default is true when N is over 100 or a
 	// fan-out field is given, else false.
 	PartialOK *bool
-	// IdempotencyKey (default a new UUID) is reused on every retry.
+	// IdempotencyKey (default a new UUID, renewed after a 5xx) is reused on
+	// every retry; yours is never changed.
 	IdempotencyKey string
 }
 

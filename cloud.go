@@ -51,8 +51,9 @@ type CloudOptions struct {
 	// Retry is applied to every request where trying again is safe: reads,
 	// deletes, heartbeats and drains on infra failures and on any answer
 	// with retryable: true; the calls that make sandboxes and jobs (create,
-	// batch, fork, grade, jobs), which carry an Idempotency-Key reused on
-	// each retry; and any request, a POST too, answered 429, 503
+	// batch, fork, grade, jobs), which carry an Idempotency-Key (the SDK's
+	// own is reused after no answer, a 429 or a 409, and renewed after a
+	// 5xx; yours is never changed); and any request, a POST too, answered 429, 503
 	// database_busy or 409 template_building (the cloud refused it before
 	// acting on it), waiting at least the Retry-After header or the body's
 	// retry_after / retry_after_s. Backoff is exponential with full jitter.
@@ -214,8 +215,9 @@ func (c *Cloud) request(ctx context.Context, method, path string, body, out any)
 	return c.requestKeyed(ctx, method, path, body, out, "")
 }
 
-// requestKeyed is request with an Idempotency-Key: key, or a new one on the
-// calls that make sandboxes (keyedRoute). The same key goes with every retry.
+// requestKeyed is request with an Idempotency-Key: key, sent unchanged on
+// every retry, or one of the SDK's own on the calls that make sandboxes and
+// jobs (keyedRoute), renewed after a 5xx (see send).
 func (c *Cloud) requestKeyed(ctx context.Context, method, path string, body, out any, key string) error {
 	var payload []byte
 	ct := ""
@@ -241,7 +243,7 @@ func (c *Cloud) requestKeyed(ctx context.Context, method, path string, body, out
 }
 
 // keyedRE: the POSTs kosa8 Cloud keeps an Idempotency-Key for (24 hours).
-var keyedRE = regexp.MustCompile(`^/v1/sandboxes(/batch|/[A-Za-z0-9_]{1,64}/(fork|grade))?$`)
+var keyedRE = regexp.MustCompile(`^/v1/sandboxes(/batch|/[A-Za-z0-9_]{1,64}/(fork|grade))?$|^/v1/jobs$`)
 
 // idempotentPosts are POSTs that are safe to send twice.
 var idempotentPosts = map[string]bool{"/v1/sandboxes/heartbeat": true, "/v1/sandboxes/drain": true}
@@ -278,11 +280,18 @@ func NewIdempotencyKey() string {
 }
 
 // send is one call, retried as c.retry allows for this method and path.
+//
+// A key the caller gave goes unchanged with every retry. The SDK's own key
+// (on a keyedRoute) is kept after no answer (the first try may still be
+// running and may have made the sandbox), a 429 or a 409, and replaced
+// after a 5xx (renewsIdempotencyKey), so each retry of a server-side
+// failure is a new attempt.
 func (c *Cloud) send(ctx context.Context, method, path, contentType string, body []byte, accept, key string) ([]byte, error) {
 	if err := checkIdempotencyKey(key); err != nil {
 		return nil, err
 	}
-	if key == "" && keyedRoute(method, path) {
+	ownKey := key == "" && keyedRoute(method, path)
+	if ownKey {
 		key = NewIdempotencyKey()
 	}
 	safe := key != "" || method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || idempotentPosts[barePath(path)]
@@ -301,7 +310,18 @@ func (c *Cloud) send(ctx context.Context, method, path, contentType string, body
 		if sleepCtx(ctx, c.retry.Delay(err, attempt)) != nil {
 			return nil, err
 		}
+		if ownKey && renewsIdempotencyKey(err) {
+			key = NewIdempotencyKey()
+		}
 	}
+}
+
+// renewsIdempotencyKey reports whether a retry after err gets a new SDK-made
+// Idempotency-Key: only when kosa8 Cloud answered with a 5xx (502
+// host_failed, 503 no_capacity, ...). No answer, a 429 and a 409 keep it.
+func renewsIdempotencyKey(err error) bool {
+	e, ok := AsError(err)
+	return ok && e.cloud && e.Status >= 500
 }
 
 // preExecution reports whether err is an answer the cloud gives before it
@@ -604,9 +624,10 @@ type CloudCreateOptions struct {
 	// unless a heartbeat (CloudSandboxes.Heartbeat) moves that forward, so a
 	// crashed client leaks nothing. Not with TTLSeconds or DeleteAfter.
 	LeaseS int
-	// IdempotencyKey is sent as the Idempotency-Key header (default a new
-	// UUID) and reused on every retry, so a create retried after a timeout
-	// or a 5xx makes one sandbox, not two. For 24 hours the same key and
+	// IdempotencyKey is sent as the Idempotency-Key header, unchanged on
+	// every retry. The default (a new UUID) is reused after a timeout, a
+	// 429 or a 409, so a retried create makes one sandbox, not two, and
+	// renewed after a 5xx, so that retry is a new attempt. For 24 hours the same key and
 	// body get the first answer again; another body is 422
 	// idempotency_mismatch.
 	IdempotencyKey string
