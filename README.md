@@ -319,7 +319,11 @@ Every Cloud request is retried with exponential backoff and full jitter (3 tries
 `CloudOptions.Retry`), waiting at least the `Retry-After` header or the body's `retry_after`:
 
 - reads, deletes and puts on infra failures and on any answer with `retryable: true`;
-- creates, batches, forks, grades and job submits, which carry an `Idempotency-Key`;
+- creates, batches, forks, grades and job submits, which carry an `Idempotency-Key`. The SDK's
+  own key is kept after no answer (the first try may still be running and may have made the
+  sandbox), a 429 and a 409 `idempotency_in_progress` / `template_building`; after a 5xx (502
+  `host_failed`, 503 `no_capacity`, ...) the retry gets a new key, so it is a new attempt. A key
+  you pass as `IdempotencyKey` is never changed;
 - any request, a POST too, answered 429, 503 `database_busy` or 409 `template_building`: the
   cloud refused it before acting on it.
 

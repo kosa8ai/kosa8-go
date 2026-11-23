@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Retries of creates, batches, forks, grades and job submits use a new SDK-made `Idempotency-Key`
+  after a 5xx (502 `host_failed`, 503 `no_capacity` / `host_restarting` / `host_unavailable`, 504),
+  so each retry of a server-side failure is a new attempt. The key is still kept after no answer
+  (the first try may have created the sandbox), a 429 and a 409 `idempotency_in_progress` /
+  `template_building`. A key you pass as `IdempotencyKey` is never changed. Retry-After is honoured
+  as before.
+
 ## 0.6.1 - 2026-11-22
 
 The 0.6 release of the five SDKs. Go is v0.6.1, not v0.6.0: a `v0.6.0` tag was pushed by mistake on
