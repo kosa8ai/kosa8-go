@@ -29,8 +29,15 @@ type Error struct {
 	// Cloud sends it with a 402. Empty when absent.
 	UpgradeURL string
 	// AgentMessage is a sentence an AI agent should relay to its person word
-	// for word; kosa8 Cloud sends it with a 402. Empty when absent.
+	// for word; kosa8 Cloud sends it with a 402 and a 429 quota_exceeded.
+	// Empty when absent.
 	AgentMessage string
+	// RequestURL is where to ask for a higher limit; kosa8 Cloud sends it
+	// with a 429 quota_exceeded. Empty when absent.
+	RequestURL string
+	// Quota is a 402 plan_limit / plan_feature's detail (the limit, what is
+	// used, the plan and the ways past it); nil when the answer has none.
+	Quota *QuotaDetail
 	// RetryAfter is the server's Retry-After header (a 429, usually); zero
 	// when it sent none.
 	RetryAfter time.Duration
@@ -46,6 +53,93 @@ type Error struct {
 	// cloud marks an error answer from the kosa8 Cloud API, whose Error()
 	// adds the status, code, wait and request id to the sentence.
 	cloud bool
+}
+
+// QuotaDetail is what a kosa8 Cloud 402 plan_limit or plan_feature says
+// about the limit that was reached. Fields the answer left out are zero.
+type QuotaDetail struct {
+	LimitName string        // sandbox_hours, running, size, persistent or snapshots (Starter: credit, memory, ...)
+	Limit     *float64      // the plan's limit
+	Used      *float64      // what the organization has used (for size, the vCPU asked for)
+	Unit      string        // starter_limit only: the limit's unit, when the answer names one
+	Plan      string        // the organization's plan
+	NextPlan  string        // the first plan that includes more; "" when none (contact sales)
+	Feature   string        // plan_feature: the feature the plan lacks
+	PackURL   string        // where to add the pack for this limit, when one is sold
+	Options   []QuotaOption // the ways past the limit, cheaper a month first
+}
+
+// QuotaOption is one way past a plan limit: an add-on pack (Kind "pack",
+// Addon) or the next plan (Kind "upgrade", Plan).
+type QuotaOption struct {
+	Kind       string  `json:"kind"`
+	Addon      string  `json:"addon,omitempty"`
+	Plan       string  `json:"plan,omitempty"`
+	Label      string  `json:"label,omitempty"`
+	MonthlyUSD float64 `json:"monthly_usd,omitempty"`
+	URL        string  `json:"url,omitempty"`
+}
+
+// quotaOf reads a QuotaDetail from an error body; nil when it has none.
+func quotaOf(m map[string]any) *QuotaDetail {
+	q := &QuotaDetail{}
+	found := false
+	str := func(k string) string {
+		v, _ := m[k].(string)
+		if v != "" {
+			found = true
+		}
+		return v
+	}
+	num := func(k string) *float64 {
+		if v, ok := m[k].(float64); ok {
+			found = true
+			return &v
+		}
+		return nil
+	}
+	q.LimitName = str("limit_name")
+	q.Limit = num("limit")
+	q.Used = num("used")
+	// 402/429 starter_limit nests it: limit: {name, value, used, unit}.
+	if lm, ok := m["limit"].(map[string]any); ok {
+		found = true
+		if v, ok := lm["name"].(string); ok && q.LimitName == "" {
+			q.LimitName = v
+		}
+		if v, ok := lm["value"].(float64); ok {
+			q.Limit = &v
+		}
+		if v, ok := lm["used"].(float64); ok && q.Used == nil {
+			q.Used = &v
+		}
+		q.Unit, _ = lm["unit"].(string)
+	}
+	q.Plan = str("plan")
+	q.NextPlan = str("next_plan")
+	q.Feature = str("feature")
+	q.PackURL = str("pack_url")
+	if opts, ok := m["options"].([]any); ok {
+		for _, o := range opts {
+			om, ok := o.(map[string]any)
+			if !ok {
+				continue
+			}
+			var qo QuotaOption
+			qo.Kind, _ = om["kind"].(string)
+			qo.Addon, _ = om["addon"].(string)
+			qo.Plan, _ = om["plan"].(string)
+			qo.Label, _ = om["label"].(string)
+			qo.MonthlyUSD, _ = om["monthly_usd"].(float64)
+			qo.URL, _ = om["url"].(string)
+			q.Options = append(q.Options, qo)
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return q
 }
 
 // Kind classifies an Error.

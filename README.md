@@ -336,17 +336,18 @@ and its sentence in `Message`. All of these also match `kosa8.ErrAPI`.
 
 | `errors.Is(err, ...)` | When | Read |
 |---|---|---|
-| `ErrPaymentRequired` | 402: `payment_required`, `spending_cap_reached`, `price_not_accepted`, ... | `e.UpgradeURL` (where to pay), `e.AgentMessage` (relay word for word); empty when absent |
+| `ErrPaymentRequired` | 402: `plan_required`, `plan_limit`, `plan_feature`, `starter_limit`, `spend_cap`, `payment_required`, `price_not_accepted`, ... | `e.UpgradeURL` (where to pay), `e.AgentMessage` (relay word for word); `e.Quota` (a `plan_limit`'s `LimitName`, `Limit`, `Used`, `Plan`, `NextPlan`, `PackURL`, `Options`); empty or nil when absent |
 | `ErrOrgFrozen` | 423 `org_frozen`: the org is frozen in the Security Center | an owner or admin must unfreeze it |
-| `ErrRateLimit` | 429: rate limited or `quota_exceeded` | `e.RetryAfter` (zero without a `Retry-After` header) |
+| `ErrRateLimit` | 429: rate limited or `quota_exceeded` | `e.RetryAfter` (zero without a `Retry-After` header); for `quota_exceeded`, `e.AgentMessage` and `e.RequestURL` (where to ask for a higher limit) |
 | `ErrExecTimeout` | 504, code `exec_timeout`, or 502 `host_failed` on `/exec` saying "timed out" | run the job in the background; also matches `ErrTimeout` |
 | `ErrUnsupported` | 501 `not_available` / `not_supported`: no data plane on this host | |
 | `ErrNotFound`, `ErrAuth`, `ErrPolicy`, `ErrConflict`, `ErrBadRequest` | 404, 401, 403, 409, 400 | |
 
 Each also has `e.FailureClass` (`infra`, `quota`, `client`, `timeout`) and `e.Retryable`.
 
-A new organization runs nothing until a payment method is on file; until then creating a sandbox
-fails with `ErrPaymentRequired`.
+A new organization starts on the free Starter plan (no card): past its allowance or limits, or with
+no plan at all, creating a sandbox fails with `ErrPaymentRequired` (402 `starter_limit` or
+`plan_required`; Starter's running limit is a 429 `starter_limit`), with `e.Quota` and `e.UpgradeURL` set.
 
 ## The same thing in each language
 

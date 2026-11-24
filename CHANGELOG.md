@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Cloud errors carry the 402/429 contract in full: `Error.Quota` (`*QuotaDetail`: a `plan_limit` /
+  `plan_feature`'s `LimitName`, `Limit`, `Used`, `Plan`, `NextPlan`, `Feature`, `PackURL` and `Options`,
+  the ways past the limit) and `Error.RequestURL` (a 429 `quota_exceeded`'s link to ask for more).
+  These were only reachable through the untyped `Error.Body` before.
 - Retries of creates, batches, forks, grades and job submits use a new SDK-made `Idempotency-Key`
   after a 5xx (502 `host_failed`, 503 `no_capacity` / `host_restarting` / `host_unavailable`, 504),
   so each retry of a server-side failure is a new attempt. The key is still kept after no answer
