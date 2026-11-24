@@ -7,7 +7,7 @@ your own machine. Standard library only.
 Method for method it matches [`@kosa8/sdk`](https://github.com/kosa8ai/kosa8-js) (TypeScript) and `kosa8` (Python).
 
 ```sh
-go get github.com/kosa8ai/kosa8-go@v0.7.0
+go get github.com/kosa8ai/kosa8-go@v0.8.0
 ```
 
 ## kosa8 Cloud quickstart

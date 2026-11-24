@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 - 2026-11-24
 
 - GitHub repos: `CloudCreateOptions.Repo` starts a sandbox from a repo of the org's connected
   GitHub, cloned into /workspace/<name>: `kosa8.Repo("owner/name@ref")` or
