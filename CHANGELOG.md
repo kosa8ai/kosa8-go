@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A request cut off by the caller's own context deadline no longer says to raise
+  `CloudOptions.Timeout`.
 - `CloudCreateOptions.DiskGB` takes 8..500 (it refused anything over 200 before sending, though Team
   plans get 256 GB and Scale 500 GB; the API enforces the plan). New `CloudCreateOptions.KVM`
   (`*bool`, the preview `kvm` flag) and `CloudSandboxInfo.LeaseS` (`lease_s`); the `expired`
