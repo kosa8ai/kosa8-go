@@ -221,13 +221,22 @@ type CloudBackgroundExec struct {
 	Output          *string `json:"output"` // the output so far (its tail)
 	OutputBytes     *int64  `json:"output_bytes"`
 	OutputTruncated bool    `json:"output_truncated"`
+	TimeoutS        *int    `json:"timeout_s"` // the TimeoutS it was started with, if any
+	TimedOut        bool    `json:"timed_out"` // it ran past TimeoutS and was ended
+	Stopped         bool    `json:"stopped"`   // StopBackground ended it
 }
+
+// CloudMaxTimeoutS is the longest timeout_s the Cloud API takes for a
+// background or streamed exec: a day.
+const CloudMaxTimeoutS = 86400
 
 // Done reports whether the command has exited.
 func (e CloudBackgroundExec) Done() bool { return e.State == "exited" || e.ExitCode != nil }
 
 // ExecBackground starts argv and returns at once while it keeps running
-// (no 90 s limit). Poll it with BackgroundExec or WaitBackground.
+// (no 90 s limit). Poll it with BackgroundExec or WaitBackground. TimeoutS
+// (1..86400) has the host end it after that many seconds; BackgroundExec
+// then reports TimedOut.
 func (b *CloudSandbox) ExecBackground(ctx context.Context, argv []string, o *CloudExecOptions) (CloudBackgroundExec, error) {
 	if len(argv) == 0 {
 		return CloudBackgroundExec{}, usage("ExecBackground needs a command")
@@ -239,6 +248,12 @@ func (b *CloudSandbox) ExecBackground(ctx context.Context, argv []string, o *Clo
 		}
 		if len(o.Env) > 0 {
 			body["env"] = envList(o.Env)
+		}
+		if o.TimeoutS != 0 {
+			if o.TimeoutS < 1 || o.TimeoutS > CloudMaxTimeoutS {
+				return CloudBackgroundExec{}, usage("TimeoutS must be 1..%d, not %d", CloudMaxTimeoutS, o.TimeoutS)
+			}
+			body["timeout_s"] = o.TimeoutS
 		}
 	}
 	var r struct {

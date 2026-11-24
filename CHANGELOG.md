@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `CloudSandbox.ExecStream(ctx, argv, opts, onOutput)`: the streamed exec (`stream: true`) the
+  Python and JS SDKs have, with no 90 s limit (`TimeoutS` up to 86400), output delivered as it is
+  printed, heartbeats skipped, a stalled stream given up after `CloudStreamIdle` (60 s), and
+  `exec_timeout` / error frames returned as `ErrExecTimeout` / `ErrStream` with the output so far.
+  `Exec` with a `TimeoutS` over 90 now streams instead of refusing it.
+- `ExecBackground` sends `CloudExecOptions.TimeoutS` (1..86400); it was dropped, so a runaway
+  background command ran until the sandbox went. `CloudBackgroundExec` gains `TimeoutS`,
+  `TimedOut` and `Stopped`.
 - Cloud errors carry the 402/429 contract in full: `Error.Quota` (`*QuotaDetail`: a `plan_limit` /
   `plan_feature`'s `LimitName`, `Limit`, `Used`, `Plan`, `NextPlan`, `Feature`, `PackURL` and `Options`,
   the ways past the limit) and `Error.RequestURL` (a 429 `quota_exceeded`'s link to ask for more).

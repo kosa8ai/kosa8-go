@@ -77,9 +77,12 @@ another address. These snippets are compiled as examples in `example_test.go`.
   (one long-lived container: the whole filesystem and background processes last between
   commands); install into `/workspace` otherwise. The code interpreter (`RunCode`) needs a
   persistent sandbox, and persistent sandboxes count against your plan's persistent limit.
-- A buffered exec runs at most **90 s** (`ErrExecTimeout`). Run long jobs in the background
-  and poll: `box.ExecShell(ctx, "nohup make test > /workspace/test.log 2>&1 &", nil)`.
-  `&kosa8.CloudExecOptions{TimeoutS: 30}` stops a command sooner, in the sandbox.
+- A buffered exec runs at most **90 s** (`ErrExecTimeout`). A **streamed exec** has no such limit
+  and prints as it goes: `box.ExecStream(ctx, argv, &kosa8.CloudExecOptions{TimeoutS: 3600},
+  func(stream string, data []byte) error { os.Stdout.Write(data); return nil })` (`TimeoutS` up
+  to a day); `Exec` with a `TimeoutS` over 90 streams too. Or run it in the background and poll
+  (`ExecBackground`, below). `&kosa8.CloudExecOptions{TimeoutS: 30}` stops a command sooner, in
+  the sandbox.
 - `box.ID()` is a method: `fmt.Println(box.ID)` without the call prints a func value (`go vet`
   reports "func value, not called"). `r.ExitCode` is an `*int`, nil when the cloud sent no exit
   status; check it, or use `r.OK()`.
@@ -146,7 +149,7 @@ ended): those calls return the server's 501 `not_available` with its reason
 ### Background commands, previews, terminal
 
 ```go
-job, _ := box.ExecBackground(ctx, []string{"sh", "-c", "npm run build"}, nil) // no 90 s limit
+job, _ := box.ExecBackground(ctx, []string{"sh", "-c", "npm run build"}, nil) // no 90 s limit; TimeoutS up to a day
 job, _ = box.WaitBackground(ctx, job.ID, 0)                                   // or BackgroundExec to poll once
 fmt.Println(*job.ExitCode, *job.Output)
 
