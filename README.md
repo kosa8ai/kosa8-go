@@ -174,6 +174,28 @@ t, _ := box.Terminal(ctx, &kosa8.CloudTerminalOptions{Cols: 120, Rows: 40}) // a
   `Delete`.
 - `Metrics`, `Logs(ctx, limit)`, `SetLabels`, `Secrets` (names it holds); `Cloud.Capabilities`.
 
+### GitHub repos
+
+Connect GitHub once (app.kosa8.com Settings, or `kosa8 github connect`), then start from a repo
+and send changes back. kosa8 uses a token for that one repo, for at most an hour, that never
+enters the sandbox.
+
+```go
+repos, _ := cloud.GitHub.Repos(ctx, "api") // most recently pushed first
+box, err := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Repo: kosa8.Repo("acme/api@main")})
+// ... the agent edits /workspace/api ...
+pr, err := box.PullRequest(ctx, &kosa8.CloudPullRequestOptions{Title: "Fix the flaky test"})
+if errors.Is(err, kosa8.ErrGitHubNotConnected) {
+	e, _ := kosa8.AsError(err)
+	fmt.Println("connect GitHub:", e.ConnectURL)
+}
+fmt.Println(pr.URL)
+```
+
+Also `cloud.GitHub.Status`, `ReposPage`, `Branches`; `box.Repo` (clone status and changes) and
+`box.Push`. Errors: `ErrGitHubNotConnected`, `ErrGitHubPermissions` (`MissingPermissions`,
+`SettingsURL`), `ErrNoChanges`, `ErrRepoNotFound`, `ErrGitHubUnavailable`.
+
 ### Secrets and Pipelines
 
 ```go

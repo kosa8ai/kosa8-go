@@ -49,6 +49,15 @@ type Error struct {
 	// RequestID identifies the request to kosa8 support: the answer's
 	// X-Request-Id header, else Cloudflare's cf-ray. Empty when absent.
 	RequestID string
+	// ConnectURL is where an admin connects GitHub; kosa8 Cloud sends it with
+	// 409 github_not_connected (ErrGitHubNotConnected). Empty when absent.
+	ConnectURL string
+	// SettingsURL is where on GitHub to approve the permissions the kosa8
+	// GitHub App lacks, and MissingPermissions names them
+	// (contents:write, pull_requests:write, metadata:read); both come with
+	// 409 github_permissions (ErrGitHubPermissions).
+	SettingsURL        string
+	MissingPermissions []string
 
 	// cloud marks an error answer from the kosa8 Cloud API, whose Error()
 	// adds the status, code, wait and request id to the sentence.
@@ -209,6 +218,10 @@ func (e *Error) Is(target error) bool {
 	if !ok || t.Message != "" {
 		return false
 	}
+	if t.Code != "" {
+		// A code sentinel (ErrGitHubNotConnected, ...) matches that code only.
+		return e.Code == t.Code
+	}
 	if t.Kind == KindPolicy && e.Kind == KindApprovalRequired {
 		return true // an approval refusal is a policy refusal
 	}
@@ -249,6 +262,25 @@ var (
 	ErrCheckpoint  = &Error{Kind: KindCheckpoint}
 	ErrTimeout     = &Error{Kind: KindTimeout}
 	ErrUsage       = &Error{Kind: KindUsage}
+
+	// GitHub repos (Cloud.GitHub, CloudCreateOptions.Repo, CloudSandbox.Push
+	// and PullRequest). Each also matches its Kind's sentinel (ErrConflict,
+	// ErrNotFound, ErrAPI).
+
+	// ErrGitHubNotConnected: 409 github_not_connected; an admin connects
+	// GitHub at Error.ConnectURL.
+	ErrGitHubNotConnected = &Error{Kind: KindConflict, Code: "github_not_connected"}
+	// ErrGitHubPermissions: 409 github_permissions; the kosa8 GitHub App
+	// lacks Error.MissingPermissions, approved at Error.SettingsURL.
+	ErrGitHubPermissions = &Error{Kind: KindConflict, Code: "github_permissions"}
+	// ErrNoChanges: 409 no_changes; nothing changed in the sandbox's repo.
+	ErrNoChanges = &Error{Kind: KindConflict, Code: "no_changes"}
+	// ErrRepoNotFound: 404 repo_not_found; the repo is not visible to the
+	// org's GitHub installations (or does not exist).
+	ErrRepoNotFound = &Error{Kind: KindNotFound, Code: "repo_not_found"}
+	// ErrGitHubUnavailable: 502 github_unavailable; GitHub did not answer or
+	// rate-limited kosa8. Error.RetryAfter says when to try again.
+	ErrGitHubUnavailable = &Error{Kind: KindAPI, Code: "github_unavailable"}
 )
 
 // AsError returns err as *Error, if it is one.
