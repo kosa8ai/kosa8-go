@@ -352,6 +352,7 @@ func (c *Cloud) do(ctx context.Context, method, path, contentType string, body i
 
 // once sends one request, without retries.
 func (c *Cloud) once(ctx context.Context, method, path, contentType string, body io.Reader, accept, key string) ([]byte, error) {
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
@@ -370,6 +371,10 @@ func (c *Cloud) once(ctx context.Context, method, path, contentType string, body
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
+			if parent.Err() != nil {
+				// The caller's own deadline, not CloudOptions.Timeout.
+				return nil, &Error{Kind: KindTimeout, Message: fmt.Sprintf("%s %s: the context's deadline passed before kosa8 Cloud answered", method, path), Method: method, Path: path, Err: err}
+			}
 			return nil, &Error{Kind: KindTimeout, Message: fmt.Sprintf("kosa8 Cloud did not answer %s %s within %s; try again, or raise CloudOptions.Timeout", method, path, c.timeout), Method: method, Path: path, Err: err}
 		}
 		if errors.Is(err, context.Canceled) {

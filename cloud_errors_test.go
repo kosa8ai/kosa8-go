@@ -225,3 +225,19 @@ func TestFailureOfQuotaCodesMatchServer(t *testing.T) {
 		}
 	}
 }
+
+// A caller's own context deadline was reported as CloudOptions.Timeout.
+func TestCloudCallerDeadlineMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+	c, err := NewCloud(CloudOptions{APIKey: testCloudKey, BaseURL: srv.URL, Retry: &NoRetry, Getenv: func(string) string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = c.Me(ctx)
+	if !errors.Is(err, ErrTimeout) || strings.Contains(err.Error(), "CloudOptions.Timeout") || !strings.Contains(err.Error(), "context's deadline") {
+		t.Fatalf("%v", err)
+	}
+}
