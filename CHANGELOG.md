@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- GitHub repos: `CloudCreateOptions.Repo` starts a sandbox from a repo of the org's connected
+  GitHub, cloned into /workspace/<name>: `kosa8.Repo("owner/name@ref")` or
+  `&kosa8.CloudRepo{Name, Ref, Path, Depth}`. `CloudSandboxInfo.Repo` says whether the clone is
+  done; `box.Repo(ctx)` asks again and adds `Changes` (files changed, insertions, deletions).
+  `box.Push(ctx, opts)` commits and pushes to a branch (default `kosa8/<short id>`);
+  `box.PullRequest(ctx, opts)` pushes and opens a pull request (a draft unless `Draft: Ptr(false)`).
+  `Cloud.GitHub`: `Status`, `Repos(ctx, query)`, `ReposPage(ctx, query, page)`, `Branches(ctx, repo)`.
+  kosa8 uses a GitHub token for one repo and one operation (at most an hour) that never enters the sandbox.
+- Errors: `ErrGitHubNotConnected` (409, `Error.ConnectURL`), `ErrGitHubPermissions` (409,
+  `Error.MissingPermissions`, `Error.SettingsURL`), `ErrNoChanges` (409), `ErrRepoNotFound` (404)
+  and `ErrGitHubUnavailable` (502, `Error.RetryAfter`). Each also matches `ErrConflict`,
+  `ErrNotFound` or `ErrAPI` as before; a sentinel with a `Code` matches that code only.
+
 ## 0.7.0 - 2026-11-23
 
 - RL rollouts: each flushed chunk carries an Idempotency-Key that stays with

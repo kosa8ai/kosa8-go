@@ -87,6 +87,7 @@ type Cloud struct {
 	Webhooks   *CloudWebhooks   // webhook endpoints
 	Audit      *CloudAudit      // the tamper-evident audit log
 	RLAlerts   *CloudRLAlerts   // alert rules on RL runs
+	GitHub     *CloudGitHub     // the org's connected GitHub: status, repos, branches
 }
 
 func checkCloudBase(raw string) (string, error) {
@@ -162,6 +163,7 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	c.Webhooks = &CloudWebhooks{c: c}
 	c.Audit = &CloudAudit{c: c}
 	c.RLAlerts = &CloudRLAlerts{c: c}
+	c.GitHub = &CloudGitHub{c: c}
 	return c, nil
 }
 
@@ -459,6 +461,15 @@ func cloudError(status int, body any, method, path string) *Error {
 	e.cloud = true
 	if m, ok := body.(map[string]any); ok {
 		e.RequestURL, _ = m["request_url"].(string)
+		e.ConnectURL, _ = m["connect_url"].(string)
+		e.SettingsURL, _ = m["settings_url"].(string)
+		if miss, ok := m["missing"].([]any); ok {
+			for _, x := range miss {
+				if v, ok := x.(string); ok {
+					e.MissingPermissions = append(e.MissingPermissions, v)
+				}
+			}
+		}
 		if status == 402 || status == 429 {
 			e.Quota = quotaOf(m)
 		}
@@ -556,6 +567,9 @@ type CloudSandboxInfo struct {
 	LeaseS *int `json:"lease_s"`
 	// Labels are the caller's key=value labels ({} when none).
 	Labels map[string]string `json:"labels"`
+	// Repo is the GitHub repo it was started from (CloudCreateOptions.Repo)
+	// and whether the clone is done; nil when none.
+	Repo *CloudSandboxRepo `json:"repo"`
 }
 
 // Limits the Cloud API checks; the SDK checks them first.
@@ -643,6 +657,11 @@ type CloudCreateOptions struct {
 	Secrets []string
 	// Egress is the sandbox's own egress policy (default the org's).
 	Egress *CloudEgress
+	// Repo starts it from a repo of the org's connected GitHub, cloned into
+	// /workspace/<name> (or Repo.Path): Repo("owner/name@ref") or a
+	// &CloudRepo{...}. No GitHub token ever enters the sandbox; Info.Repo
+	// says whether the clone is done (CloudSandbox.Repo asks again).
+	Repo *CloudRepo
 	// NoWait returns as soon as the API answers, even while a sized sandbox
 	// is still booting (State "creating"); call Refresh or WaitRunning.
 	NoWait bool
@@ -749,6 +768,13 @@ func (s *CloudSandboxes) Create(ctx context.Context, o CloudCreateOptions) (*Clo
 	}
 	if err := leaseBody(body, o.LeaseS, o.TTLSeconds, o.DeleteAfter); err != nil {
 		return nil, err
+	}
+	if o.Repo != nil {
+		rb, err := o.Repo.body()
+		if err != nil {
+			return nil, err
+		}
+		body["repo"] = rb
 	}
 	var r sandboxEnvelope
 	if err := s.c.requestKeyed(ctx, "POST", "/v1/sandboxes", body, &r, o.IdempotencyKey); err != nil {
