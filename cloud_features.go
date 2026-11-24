@@ -10,6 +10,7 @@ package kosa8
 // what the org and its hosts can do before you try.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -599,13 +600,79 @@ func (f *CloudFiles) Download(ctx context.Context, path string, w io.Writer) (in
 	return io.Copy(w, resp.Body)
 }
 
-// Upload streams r into a file of any size, replacing it.
+// CloudUploadPartBytes is the largest request body Upload sends. The API
+// takes at most 100 MB a request (Cloudflare's limit), so a bigger upload
+// goes in parts of this size, each written at its offset.
+var CloudUploadPartBytes int64 = 64 << 20
+
+// Upload streams r into a file of any size, replacing it. Past
+// CloudUploadPartBytes it is sent in parts (PUT ?offset=), each held in
+// memory while it is sent and retried on its own; a host without offset
+// writes answers 501 (ErrUnsupported) for such a file.
 func (f *CloudFiles) Upload(ctx context.Context, path string, r io.Reader) (CloudFileInfo, error) {
 	if err := needPath(path); err != nil {
 		return CloudFileInfo{}, err
 	}
-	p := f.filePath("/raw", path, nil)
-	resp, err := f.b.c.stream(ctx, "PUT", p, "application/octet-stream", r)
+	part := CloudUploadPartBytes
+	if part <= 0 {
+		part = 64 << 20
+	}
+	// A seekable body that fits in one request streams as it is.
+	if sk, ok := r.(io.Seeker); ok {
+		if cur, err := sk.Seek(0, io.SeekCurrent); err == nil {
+			if end, err := sk.Seek(0, io.SeekEnd); err == nil {
+				if _, err := sk.Seek(cur, io.SeekStart); err != nil {
+					return CloudFileInfo{}, usage("rewind the upload: %v", err)
+				}
+				if end-cur <= part {
+					return f.uploadPart(ctx, path, r, -1)
+				}
+			}
+		}
+	}
+	var off int64
+	var carry []byte
+	for {
+		var buf bytes.Buffer
+		buf.Write(carry)
+		if _, err := buf.ReadFrom(io.LimitReader(r, part-int64(len(carry)))); err != nil {
+			return CloudFileInfo{}, usage("read the upload: %v", err)
+		}
+		last := int64(buf.Len()) < part
+		carry = nil
+		if !last {
+			// Is there more? Hold one byte back for the next part.
+			var one [1]byte
+			n, err := io.ReadFull(r, one[:])
+			switch {
+			case n == 1:
+				carry = one[:]
+			case errors.Is(err, io.EOF):
+				last = true
+			default:
+				return CloudFileInfo{}, usage("read the upload: %v", err)
+			}
+		}
+		at := off
+		if off == 0 {
+			at = -1 // the first part replaces the file
+		}
+		info, err := f.uploadPart(ctx, path, bytes.NewReader(buf.Bytes()), at)
+		if err != nil || last {
+			return info, err
+		}
+		off += int64(buf.Len())
+	}
+}
+
+// uploadPart PUTs body to path at offset (-1: replace the whole file).
+func (f *CloudFiles) uploadPart(ctx context.Context, path string, body io.Reader, offset int64) (CloudFileInfo, error) {
+	var extra url.Values
+	if offset >= 0 {
+		extra = url.Values{"offset": {strconv.FormatInt(offset, 10)}}
+	}
+	p := f.filePath("/raw", path, extra)
+	resp, err := f.b.c.stream(ctx, "PUT", p, "application/octet-stream", body)
 	if err != nil {
 		return CloudFileInfo{}, err
 	}

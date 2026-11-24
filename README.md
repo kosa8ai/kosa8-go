@@ -161,7 +161,8 @@ t, _ := box.Terminal(ctx, &kosa8.CloudTerminalOptions{Cols: 120, Rows: 40}) // a
 
 ### More of the sandbox
 
-- Files: `Files().Download(ctx, path, w)` / `Upload(ctx, path, r)` stream any size;
+- Files: `Files().Download(ctx, path, w)` / `Upload(ctx, path, r)` stream any size (an upload
+  over 64 MiB goes in parts at their offsets, as the API takes at most 100 MB a request);
   `Files().Link(ctx, path, "GET"|"PUT", ttlS)` is a presigned URL straight to the host.
 - `Egress`, `SetEgress(ctx, kosa8.CloudEgress{Presets: []string{"pypi"}})`, `ResetEgress`;
   `Cloud.EgressPresets`.
