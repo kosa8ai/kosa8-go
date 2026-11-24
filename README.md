@@ -196,6 +196,22 @@ Also `cloud.GitHub.Status`, `ReposPage`, `Branches`; `box.Repo` (clone status an
 `box.Push`. Errors: `ErrGitHubNotConnected`, `ErrGitHubPermissions` (`MissingPermissions`,
 `SettingsURL`), `ErrNoChanges`, `ErrRepoNotFound`, `ErrGitHubUnavailable`.
 
+### Autopilot bots
+
+Bots are small automations on the org's sandboxes (sleep idle boxes, guard spend, block a threat).
+They are saved as drafts, tried with a dry run, and only a person turns one on.
+
+```go
+plan, _ := cloud.Bots.Plan(ctx, kosa8.CloudBotPlanOptions{Template: "spend-guard", Replay: true})
+bot, _ := cloud.Bots.Create(ctx, kosa8.CloudBotCreateOptions{Template: "spend-guard"}) // a draft
+run, _ := cloud.Bots.Run(ctx, bot.ID, nil) // a dry run by default; changes nothing
+pending, _ := cloud.Approvals.List(ctx, "pending", 0)
+```
+
+An agent never approves its own action: `Bots.Enable`, `Bots.ResumeAll` and `Approvals.Approve` /
+`Reject` need a person's key and otherwise return `kosa8.ErrHumanApprovalRequired`. A person
+approves in the web app, the desktop app, the CLI or Slack. `Bots.PauseAll` stops everything.
+
 ### Secrets and Pipelines
 
 ```go
