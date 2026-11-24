@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- RL rollouts: each flushed chunk carries an Idempotency-Key that stays with
+  those rows until kosa8 Cloud answers, so a flush whose answer was lost and
+  is resent later is stored once instead of twice (rewards were skewed).
 - A request cut off by the caller's own context deadline no longer says to raise
   `CloudOptions.Timeout`.
 - `CloudCreateOptions.DiskGB` takes 8..500 (it refused anything over 200 before sending, though Team

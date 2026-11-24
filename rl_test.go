@@ -1372,3 +1372,47 @@ func TestNewIdempotencyKey(t *testing.T) {
 		seen[k] = true
 	}
 }
+
+// A flush whose answer was lost resends the same rows with the same
+// Idempotency-Key on the next Flush, so kosa8 Cloud stores them once.
+func TestRunFlushResendsWithSameKey(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	var keys []string
+	var fail atomic.Bool
+	fail.Store(true)
+	_, c := newFake(t, func(r fakeReq) fakeAns {
+		switch {
+		case r.Path == "/v1/rl/runs":
+			return fakeAns{status: 201, body: map[string]any{"run": map[string]any{"id": "run_k"}}}
+		case strings.HasSuffix(r.Path, "/rollouts"):
+			mu.Lock()
+			keys = append(keys, r.Key)
+			mu.Unlock()
+			if fail.Load() {
+				return fakeAns{status: 400, body: errBody("invalid_rollout", "lost", nil)}
+			}
+			return fakeAns{body: map[string]any{"recorded": len(r.Body["rollouts"].([]any))}}
+		}
+		return fakeAns{body: map[string]any{"deleted": 0, "failed": []any{}, "more": false, "run": map[string]any{}, "extended": 0}}
+	})
+	run, err := c.StartRun(ctx, CloudRunOptions{Name: "k", FlushEvery: 100, HeartbeatInterval: time.Hour, Logf: func(string, ...any) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = run.Record(ctx, RolloutRow{}, RolloutRow{})
+	if _, err := run.Flush(ctx); err == nil || run.Pending() != 2 {
+		t.Fatalf("want an error and 2 pending, got %v %d", err, run.Pending())
+	}
+	_ = run.Record(ctx, RolloutRow{}) // a row recorded meanwhile goes in a later chunk
+	fail.Store(false)
+	if n, err := run.Flush(ctx); err != nil || n != 3 || run.Pending() != 0 {
+		t.Fatalf("%v %d %d", err, n, run.Pending())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(keys) != 3 || keys[0] == "" || keys[0] != keys[1] || keys[2] == keys[1] || keys[2] == "" {
+		t.Fatalf("keys %q: want the failed chunk's key reused, a new one for the next chunk", keys)
+	}
+	_ = run.Finish(ctx, "finished")
+}

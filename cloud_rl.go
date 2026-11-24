@@ -74,20 +74,25 @@ type CloudRun struct {
 	// Info is the run as the API last answered it.
 	Info Info
 
-	c          *Cloud
-	o          CloudRunOptions
-	mu         sync.Mutex
-	buf        []RolloutRow
-	flushMu    sync.Mutex
-	recorded   int
-	step       int
-	open       bool
-	stop       chan struct{}
-	done       chan struct{}
-	beats      int
-	lastErr    error
-	drained    *CloudDrainResult
-	finishOnce sync.Once
+	c       *Cloud
+	o       CloudRunOptions
+	mu      sync.Mutex
+	buf     []RolloutRow
+	flushMu sync.Mutex
+	// inflight is the chunk being sent and its Idempotency-Key, kept
+	// together until kosa8 Cloud answers: a later Flush resends the same
+	// rows with the same key, so a send whose answer was lost is stored once.
+	inflight    []RolloutRow
+	inflightKey string
+	recorded    int
+	step        int
+	open        bool
+	stop        chan struct{}
+	done        chan struct{}
+	beats       int
+	lastErr     error
+	drained     *CloudDrainResult
+	finishOnce  sync.Once
 }
 
 // StartRun creates the run (or attaches to o.RunID) and starts heartbeating
@@ -245,7 +250,7 @@ func (r *CloudRun) Record(ctx context.Context, rows ...RolloutRow) error {
 func (r *CloudRun) Pending() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.buf)
+	return len(r.inflight) + len(r.buf)
 }
 
 // Recorded is how many rows this CloudRun has sent.
@@ -265,22 +270,28 @@ func (r *CloudRun) Flush(ctx context.Context) (int, error) {
 	sent := 0
 	for {
 		r.mu.Lock()
-		n := min(len(r.buf), MaxRolloutsPerCall)
-		chunk := append([]RolloutRow(nil), r.buf[:n]...)
-		r.buf = r.buf[n:]
-		r.mu.Unlock()
-		if len(chunk) == 0 {
-			return sent, nil
+		if r.inflight == nil {
+			n := min(len(r.buf), MaxRolloutsPerCall)
+			if n == 0 {
+				r.mu.Unlock()
+				return sent, nil
+			}
+			r.inflight = append([]RolloutRow(nil), r.buf[:n]...)
+			r.inflightKey = NewIdempotencyKey()
+			r.buf = r.buf[n:]
 		}
+		chunk, key := r.inflight, r.inflightKey
+		r.mu.Unlock()
 		var a struct {
 			Recorded *int `json:"recorded"`
 		}
-		if err := r.c.request(ctx, "POST", r.path("/rollouts"), map[string]any{"rollouts": chunk}, &a); err != nil {
-			r.mu.Lock()
-			r.buf = append(chunk, r.buf...)
-			r.mu.Unlock()
+		// On an error the chunk stays in flight with its key, for the next Flush.
+		if err := r.c.requestKeyed(ctx, "POST", r.path("/rollouts"), map[string]any{"rollouts": chunk}, &a, key); err != nil {
 			return sent, err
 		}
+		r.mu.Lock()
+		r.inflight, r.inflightKey = nil, ""
+		r.mu.Unlock()
 		got := len(chunk)
 		if a.Recorded != nil {
 			got = *a.Recorded
