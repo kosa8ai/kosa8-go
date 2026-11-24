@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	kosa8 "github.com/kosa8ai/kosa8-go"
@@ -140,6 +141,16 @@ func Example_cloudErrors() {
 	if errors.Is(err, kosa8.ErrExecTimeout) {
 		// Over 90 s: run it in the background and poll instead.
 		_, _ = box.ExecShell(ctx, "nohup sh -c 'sleep 120; echo done' > /workspace/job.log 2>&1 &", nil)
+	}
+	// Or stream it: no 90 s limit, output as it is printed.
+	r, err := box.ExecStream(ctx, []string{"sh", "-c", "sleep 120; echo done"}, &kosa8.CloudExecOptions{TimeoutS: 3600},
+		func(stream string, data []byte) error { _, err := os.Stdout.Write(data); return err })
+	if err == nil && r.OK() {
+		fmt.Println("streamed", len(r.Stdout), "bytes")
+	}
+	e, quota := kosa8.AsError(err)
+	if quota && e.Quota != nil && e.Quota.Limit != nil {
+		fmt.Println(e.Quota.LimitName, *e.Quota.Limit, e.Quota.NextPlan, e.RequestURL)
 	}
 }
 

@@ -889,8 +889,10 @@ type CloudExecOptions struct {
 	Image string            // default the template's own image
 	Env   map[string]string // sent as K=V, sorted by key
 	// TimeoutS stops the command in the sandbox after this many seconds
-	// (1..90, the API's timeout_s; 0 means none, so the 90 s buffered limit
-	// applies). A stopped command is an ErrExecTimeout.
+	// (the API's timeout_s; 0 means none, so the 90 s buffered limit
+	// applies). A stopped command is an ErrExecTimeout. Exec takes 1..90 as
+	// a buffered exec and 91..86400 as a streamed one (ExecStream);
+	// ExecStream and ExecBackground take 1..86400.
 	TimeoutS int
 }
 
@@ -914,7 +916,9 @@ type CloudExecResult struct {
 // OK reports whether the command exited 0.
 func (r CloudExecResult) OK() bool { return r.ExitCode != nil && *r.ExitCode == 0 }
 
-// Exec runs argv and waits for it. A sleeping sandbox wakes for it.
+// Exec runs argv and waits for it. A sleeping sandbox wakes for it. A
+// TimeoutS over 90 runs it as a streamed exec (ExecStream), which has no
+// 90 s limit.
 //
 // Only /workspace is sure to persist between calls: an exec may run in a
 // fresh container, unless the sandbox was created Persistent. The Cloud API stops a buffered exec after 90 s (that is
@@ -934,9 +938,13 @@ func (b *CloudSandbox) Exec(ctx context.Context, argv []string, o *CloudExecOpti
 		if len(o.Env) > 0 {
 			body["env"] = envList(o.Env)
 		}
+		if o.TimeoutS > CloudExecMaxTimeoutS && o.TimeoutS <= CloudMaxTimeoutS {
+			// Past the buffered limit: stream it, which is not held to 90 s.
+			return b.ExecStream(ctx, argv, o, nil)
+		}
 		if o.TimeoutS != 0 {
 			if o.TimeoutS < 1 || o.TimeoutS > CloudExecMaxTimeoutS {
-				return CloudExecResult{}, usage("TimeoutS must be 1..%d, not %d", CloudExecMaxTimeoutS, o.TimeoutS)
+				return CloudExecResult{}, usage("TimeoutS must be 1..%d, not %d", CloudMaxTimeoutS, o.TimeoutS)
 			}
 			body["timeout_s"] = o.TimeoutS
 		}

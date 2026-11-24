@@ -148,6 +148,35 @@ func TestCloudBackgroundExec(t *testing.T) {
 	}
 }
 
+// TimeoutS was dropped on the way to a background exec, so a runaway
+// background command ran until the sandbox was deleted.
+func TestCloudBackgroundExecTimeout(t *testing.T) {
+	ctx := context.Background()
+	stub, c := newRawStub(t, func(r rawReq) rawAnswer {
+		if r.Method == "POST" {
+			return rawAnswer{status: 202, json: map[string]any{"exec": map[string]any{"id": "bg_1", "state": "running", "timeout_s": 600}}}
+		}
+		return rawAnswer{status: 200, json: map[string]any{"exec": map[string]any{"id": "bg_1", "state": "exited", "exit": 137, "timeout_s": 600, "timed_out": true, "stopped": false}}}
+	})
+	b := cloudBox(t, c)
+	e, err := b.ExecBackground(ctx, []string{"sleep", "9999"}, &CloudExecOptions{TimeoutS: 600})
+	if err != nil || e.TimeoutS == nil || *e.TimeoutS != 600 {
+		t.Fatalf("%+v %v", e, err)
+	}
+	if got := stub.last().JSON(t); !reflect.DeepEqual(got, map[string]any{"cmd": []any{"sleep", "9999"}, "background": true, "timeout_s": float64(600)}) {
+		t.Fatalf("body %v", got)
+	}
+	e, err = b.BackgroundExec(ctx, "bg_1")
+	if err != nil || !e.TimedOut || e.Stopped || !e.Done() {
+		t.Fatalf("%+v %v", e, err)
+	}
+	for _, bad := range []int{-1, CloudMaxTimeoutS + 1} {
+		if _, err := b.ExecBackground(ctx, []string{"true"}, &CloudExecOptions{TimeoutS: bad}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("TimeoutS %d: %v", bad, err)
+		}
+	}
+}
+
 func TestCloudSnapshots(t *testing.T) {
 	ctx := context.Background()
 	snap := map[string]any{"id": "snap_abcdefgh", "name": "warm", "state": "ready", "source_sandbox_id": "sbx_1", "bytes": 1024, "created_at": 1}

@@ -388,7 +388,7 @@ func TestCloudExecTimeoutS(t *testing.T) {
 		t.Fatalf("own timeout: %v", err)
 	}
 	n := len(stub.seen)
-	for _, bad := range []int{-1, 91} {
+	for _, bad := range []int{-1, CloudMaxTimeoutS + 1} { // 91..86400 streams (TestCloudExecLongTimeoutStreams)
 		if _, err := box.ExecShell(ctx, "true", &CloudExecOptions{TimeoutS: bad}); !errors.Is(err, ErrUsage) {
 			t.Fatalf("%d: %v", bad, err)
 		}
