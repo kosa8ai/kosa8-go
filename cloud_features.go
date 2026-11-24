@@ -114,8 +114,8 @@ func sizedBody(body map[string]any, o CloudCreateOptions) error {
 		body["image"] = o.Image
 	}
 	if o.DiskGB != 0 {
-		if o.DiskGB < 8 || o.DiskGB > 200 {
-			return usage("DiskGB must be 8..200, not %d", o.DiskGB)
+		if o.DiskGB < CloudMinDiskGB || o.DiskGB > CloudMaxDiskGB {
+			return usage("DiskGB must be %d..%d, not %d", CloudMinDiskGB, CloudMaxDiskGB, o.DiskGB)
 		}
 		body["disk_gb"] = o.DiskGB
 	}
@@ -124,6 +124,9 @@ func sizedBody(body map[string]any, o CloudCreateOptions) error {
 	}
 	if o.Docker {
 		body["docker"] = true
+	}
+	if o.KVM != nil {
+		body["kvm"] = *o.KVM
 	}
 	switch o.CPU {
 	case "":
@@ -166,7 +169,7 @@ func sizedBody(body map[string]any, o CloudCreateOptions) error {
 			return usage("Snapshot must be a snapshot id (snap_...), not %q", o.Snapshot)
 		}
 		if o.Template != "" || o.Size != "" || o.CPUs != 0 || o.Image != "" || o.DiskGB != 0 ||
-			o.Docker || o.Persistent || o.CPU != "" || o.Region != "" {
+			o.Docker || o.KVM != nil || o.Persistent || o.CPU != "" || o.Region != "" {
 			return usage("a create from a snapshot takes the snapshot's template, size, image, disk and region: set only Env, Name, Labels, a lifetime or SleepAfterS with it")
 		}
 		body["snapshot"] = o.Snapshot

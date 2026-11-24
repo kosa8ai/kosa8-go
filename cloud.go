@@ -513,8 +513,9 @@ func isExecTimeout(status int, code, path, msg string) bool {
 // OpenAPI Sandbox schema). Nullable fields are pointers.
 type CloudSandboxInfo struct {
 	ID string `json:"id"`
-	// State: creating | running | paused | sleeping | stopped | error |
-	// deleted | host_removed | host_lost
+	// State: creating | running | paused | sleeping | stopped | expired |
+	// error | deleted | host_removed | host_lost. expired: past its
+	// DeleteAfter; it takes no more work and is deleted within a minute.
 	State    string `json:"state"`
 	Template string `json:"template"`
 	// OriginItemVersion is the kosa8 Store version it was started (or
@@ -522,7 +523,7 @@ type CloudSandboxInfo struct {
 	OriginItemVersion *string `json:"origin_item_version"`
 	CPUs              float64 `json:"cpus"`
 	MemMB             int     `json:"mem_mb"`
-	Source            *string `json:"source"`    // pool | restore | cold | fork
+	Source            *string `json:"source"`    // pool | restore | cold | fork | snapshot
 	ParentID          *string `json:"parent_id"` // the sandbox it was forked from
 	Region            *string `json:"region"`
 	OwnHost           bool    `json:"own_host"`
@@ -545,6 +546,9 @@ type CloudSandboxInfo struct {
 	Image      *string `json:"image"`   // the OCI image of a sized create
 	DiskGB     *int    `json:"disk_gb"` // the data disk
 	CPU        string  `json:"cpu"`     // shared | dedicated
+	// LeaseS is a lease's window in seconds (a heartbeat moves DeleteAfter
+	// to now + LeaseS); nil when the sandbox is not leased.
+	LeaseS *int `json:"lease_s"`
 	// Labels are the caller's key=value labels ({} when none).
 	Labels map[string]string `json:"labels"`
 }
@@ -556,6 +560,8 @@ const (
 	CloudMaxTTLSeconds  = 7776000 // 90 days
 	CloudMaxForks       = 100     // copies a plain Fork made before 0.5.0; Fork and ForkWith now take CloudMaxBatch
 	CloudMaxLabelLen    = 200
+	CloudMinDiskGB      = 8
+	CloudMaxDiskGB      = 500 // the largest plan's sandbox disk (Scale)
 )
 
 // CloudCreateOptions are the settings for a new cloud sandbox; zero values
@@ -594,7 +600,10 @@ type CloudCreateOptions struct {
 	// Image is an OCI image to run, such as
 	// kosa8-template/universal-24.04-20261115.2 (default size 2x4).
 	Image string
-	// DiskGB is the data disk holding / and /workspace (8..200; default 32).
+	// DiskGB is the data disk holding / and /workspace (8..500; default
+	// 32). Past 200 only on a plan whose sandbox disk is bigger (Team 256,
+	// Scale 500): GET /v1/templates max_disk_gb is yours, and the API
+	// refuses more.
 	DiskGB int
 	// Persistent runs every exec in one long-lived container, so packages
 	// and background processes outside /workspace persist.
@@ -602,6 +611,12 @@ type CloudCreateOptions struct {
 	// Docker lets the sandbox run its own Docker engine (start dockerd
 	// first); it needs a size or image and makes the sandbox persistent.
 	Docker bool
+	// KVM (preview) gives the sandbox's container /dev/kvm, so an emulator
+	// runs at hardware speed. nil takes the default: true for the
+	// ghcr.io/azmxai/kosa8-android image, false otherwise. Needs a size or
+	// image, implies Persistent and Docker, and the sandbox never sleeps;
+	// 501 not_available while no host offers nested KVM.
+	KVM *bool
 	// CPU is "shared" (default) or "dedicated": whole physical cores, never
 	// sleeps, cannot be checkpointed or forked.
 	CPU string

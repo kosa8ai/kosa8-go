@@ -602,3 +602,24 @@ func TestCloudUploadInParts(t *testing.T) {
 		}
 	}
 }
+
+// DiskGB over 200 was refused before any request, though the API takes up to
+// the plan's sandbox disk (Team 256, Scale 500). kvm and lease_s were not
+// reachable.
+func TestCloudCreateDiskKVMLease(t *testing.T) {
+	stub, c := newRawStub(t, func(r rawReq) rawAnswer {
+		return rawAnswer{status: 201, json: map[string]any{"sandbox": map[string]any{"id": "sbx_2", "state": "running", "lease_s": 600}}}
+	})
+	b, err := c.Sandboxes.Create(context.Background(), CloudCreateOptions{Size: "4x8", DiskGB: 500, KVM: Ptr(false), LeaseS: 600})
+	if err != nil || b.Info.LeaseS == nil || *b.Info.LeaseS != 600 {
+		t.Fatalf("%+v %v", b, err)
+	}
+	if got := stub.last().JSON(t); !reflect.DeepEqual(got, map[string]any{"size": "4x8", "disk_gb": float64(500), "kvm": false, "lease_s": float64(600)}) {
+		t.Fatalf("body %v", got)
+	}
+	for _, o := range []CloudCreateOptions{{DiskGB: 7}, {DiskGB: 501}, {Snapshot: "snap_abcdefgh", KVM: Ptr(true)}} {
+		if _, err := c.Sandboxes.Create(context.Background(), o); !errors.Is(err, ErrUsage) {
+			t.Fatalf("%+v: %v", o, err)
+		}
+	}
+}

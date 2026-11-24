@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `CloudCreateOptions.DiskGB` takes 8..500 (it refused anything over 200 before sending, though Team
+  plans get 256 GB and Scale 500 GB; the API enforces the plan). New `CloudCreateOptions.KVM`
+  (`*bool`, the preview `kvm` flag) and `CloudSandboxInfo.LeaseS` (`lease_s`); the `expired`
+  state and `snapshot` source are documented.
 - `Files().Upload` of more than 100 MB failed: the API takes at most 100 MB a request (Cloudflare's
   limit). An upload over `CloudUploadPartBytes` (64 MiB) now goes in parts, the first replacing
   the file and the rest written at their offsets (`PUT …/files/raw?offset=`), each retried on its own.
