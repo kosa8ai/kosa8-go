@@ -452,6 +452,12 @@ func cloudError(status int, body any, method, path string) *Error {
 	e.UpgradeURL = upgrade
 	e.AgentMessage = agent
 	e.cloud = true
+	if m, ok := body.(map[string]any); ok {
+		e.RequestURL, _ = m["request_url"].(string)
+		if status == 402 || status == 429 {
+			e.Quota = quotaOf(m)
+		}
+	}
 	e.FailureClass, e.Retryable = FailureOf(status, code)
 	if m, ok := body.(map[string]any); ok {
 		if fc, ok := m["failure_class"].(string); ok && fc != "" {

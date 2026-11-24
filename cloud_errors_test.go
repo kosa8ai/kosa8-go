@@ -160,3 +160,68 @@ func TestCloudClientErrorHints(t *testing.T) {
 		t.Fatalf("daemon: %q", d.Error())
 	}
 }
+
+func TestCloudErrorPlanLimitDetail(t *testing.T) {
+	c := errCloud(t, 402, map[string]any{
+		"error": "plan_limit", "message": "Starter runs 2 sandboxes at once",
+		"limit_name": "running", "limit": 2, "used": 2, "plan": "starter", "next_plan": "pro",
+		"pack_url": "https://app.kosa8.com/app#packs", "upgrade_url": "https://app.kosa8.com/app#plan",
+		"agent_message": "Tell your person: the plan's running limit is reached.",
+		"options": []any{
+			map[string]any{"kind": "pack", "addon": "running_5", "label": "+5 running", "monthly_usd": 10, "url": "https://app.kosa8.com/app#packs"},
+			map[string]any{"kind": "upgrade", "plan": "pro", "monthly_usd": 30},
+		},
+	}, nil)
+	e := cloudErr(t, c)
+	if !errors.Is(e, ErrPaymentRequired) || e.UpgradeURL == "" || e.AgentMessage == "" {
+		t.Fatalf("%+v", e)
+	}
+	q := e.Quota
+	if q == nil || q.LimitName != "running" || q.Limit == nil || *q.Limit != 2 || q.Used == nil || *q.Used != 2 ||
+		q.Plan != "starter" || q.NextPlan != "pro" || q.PackURL == "" || len(q.Options) != 2 ||
+		q.Options[0].Kind != "pack" || q.Options[0].Addon != "running_5" || q.Options[0].MonthlyUSD != 10 ||
+		q.Options[1].Plan != "pro" {
+		t.Fatalf("quota %+v", q)
+	}
+}
+
+func TestCloudErrorQuotaExceededRequestURL(t *testing.T) {
+	c := errCloud(t, 429, map[string]any{
+		"error": "quota_exceeded", "message": "20 sandboxes are running, the limit",
+		"agent_message": "Ask for more at the link.", "request_url": "https://app.kosa8.com/app#limits",
+	}, nil)
+	e := cloudErr(t, c)
+	if !errors.Is(e, ErrRateLimit) || e.RequestURL != "https://app.kosa8.com/app#limits" || e.AgentMessage != "Ask for more at the link." || e.Retryable {
+		t.Fatalf("%+v", e)
+	}
+	if e.Quota != nil {
+		t.Fatalf("no quota detail expected: %+v", e.Quota)
+	}
+}
+
+func TestCloudErrorStarterLimitNestedLimit(t *testing.T) {
+	c := errCloud(t, 429, map[string]any{
+		"error": "starter_limit", "code": "starter_limit", "message": "Starter runs 2 sandboxes at once and 2 are running",
+		"limit": map[string]any{"name": "running", "value": 2, "used": 2, "unit": nil},
+		"plan":  "starter", "next_plan": "pro", "upgrade_url": "https://app.kosa8.com/app#plan", "agent_message": "Relay this.",
+	}, nil)
+	e := cloudErr(t, c)
+	q := e.Quota
+	if e.Code != "starter_limit" || q == nil || q.LimitName != "running" || q.Limit == nil || *q.Limit != 2 ||
+		q.Used == nil || *q.Used != 2 || q.Plan != "starter" || q.NextPlan != "pro" || e.UpgradeURL == "" || e.AgentMessage != "Relay this." {
+		t.Fatalf("%+v %+v", e, q)
+	}
+}
+
+// The cloud's failures.js lists these as quota, not retryable: a 429
+// starter_limit outside /v1/sandboxes (no failure_class in the body) must
+// not be retried.
+func TestFailureOfQuotaCodesMatchServer(t *testing.T) {
+	for _, code := range []string{"starter_limit", "spend_cap", "payment_failed"} {
+		for _, status := range []int{402, 429} {
+			if fc, rt := FailureOf(status, code); fc != FailureQuota || rt {
+				t.Errorf("FailureOf(%d, %s) = %s, %v; want quota, false", status, code, fc, rt)
+			}
+		}
+	}
+}
