@@ -106,7 +106,7 @@ func TestCloudDefaultBaseURL(t *testing.T) {
 }
 
 func TestCloudVersionAndUserAgent(t *testing.T) {
-	if Version != "0.6.1" || UserAgent != "kosa8-go/0.6.1" {
+	if Version != "0.7.0" || UserAgent != "kosa8-go/0.7.0" {
 		t.Fatalf("%s %s", Version, UserAgent)
 	}
 	stub, c := newRawStub(t, func(rawReq) rawAnswer { return rawAnswer{status: 200, json: map[string]any{}} })
