@@ -88,6 +88,8 @@ type Cloud struct {
 	Audit      *CloudAudit      // the tamper-evident audit log
 	RLAlerts   *CloudRLAlerts   // alert rules on RL runs
 	GitHub     *CloudGitHub     // the org's connected GitHub: status, repos, branches
+	Bots       *CloudBots       // Autopilot bots: templates, plans, runs, pause-all
+	Approvals  *CloudApprovals  // bot actions waiting for a person's decision
 }
 
 func checkCloudBase(raw string) (string, error) {
@@ -164,6 +166,8 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	c.Audit = &CloudAudit{c: c}
 	c.RLAlerts = &CloudRLAlerts{c: c}
 	c.GitHub = &CloudGitHub{c: c}
+	c.Bots = &CloudBots{c: c}
+	c.Approvals = &CloudApprovals{c: c}
 	return c, nil
 }
 

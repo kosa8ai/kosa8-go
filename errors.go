@@ -281,6 +281,14 @@ var (
 	// ErrGitHubUnavailable: 502 github_unavailable; GitHub did not answer or
 	// rate-limited kosa8. Error.RetryAfter says when to try again.
 	ErrGitHubUnavailable = &Error{Kind: KindAPI, Code: "github_unavailable"}
+
+	// ErrHumanApprovalRequired: 403 human_required; only a person may do
+	// this (Cloud.Approvals Approve / Reject, Cloud.Bots Enable and
+	// ResumeAll). An agent never approves its own action: a person approves
+	// in the web app, the desktop app, the CLI or Slack. A capability token,
+	// MCP or an org key bound to no member is always refused. Also matches
+	// ErrPolicy and ErrAPI.
+	ErrHumanApprovalRequired = &Error{Kind: KindPolicy, Code: "human_required"}
 )
 
 // AsError returns err as *Error, if it is one.

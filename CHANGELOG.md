@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Autopilot bots: `Cloud.Bots` with `List` (bots, `PausedAll`, `PendingApprovals`), `Templates`,
+  `Template(id)`, `Plan` (template or spec, optional 7-day `Replay`), `Compile(text)` (a sentence of
+  at most 500 characters into a spec; checked before sending), `Create` (a draft; exactly one of
+  `Template` and `Spec`), `Get`, `Update`, `Delete`, `Enable`, `Disable`, `Run` (a dry run unless
+  `DryRun: Ptr(false)`), `Runs`, `GetRun`, `CancelRun`, `UndoStep`, `PauseAll`, `ResumeAll`.
+- `Cloud.Approvals`: `List(state, limit)`, `Get`, `Approve(id, &CloudApproveOptions{Reason, EditedArgs})`,
+  `Reject(id, reason)`. Deciding works only with a person's key: an agent never approves its own action.
+- Errors: `ErrHumanApprovalRequired` (403 `human_required`) from `Approve`, `Reject`, `Enable` and
+  `ResumeAll` with a capability token, MCP or an org key bound to no member; it also matches
+  `ErrPolicy` and `ErrAPI`.
+
 ## v0.8.0 - 2026-11-24
 
 - GitHub repos: `CloudCreateOptions.Repo` starts a sandbox from a repo of the org's connected
