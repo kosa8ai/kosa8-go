@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -552,5 +555,50 @@ func TestCloudPipelines(t *testing.T) {
 	}
 	if _, err := p.Run(ctx, CloudPipelineRunOptions{}); !errors.Is(err, ErrUsage) {
 		t.Fatal(err)
+	}
+}
+
+// Upload sent any reader as one request, but the API takes at most 100 MB a
+// request: a big file failed with 413. Past CloudUploadPartBytes it now goes
+// in parts, the first replacing the file and the rest at their offsets.
+func TestCloudUploadInParts(t *testing.T) {
+	old := CloudUploadPartBytes
+	CloudUploadPartBytes = 4
+	defer func() { CloudUploadPartBytes = old }()
+	var file []byte
+	stub, c := newRawStub(t, func(r rawReq) rawAnswer {
+		u, _ := url.Parse(r.Path)
+		if off := u.Query().Get("offset"); off == "" {
+			file = append([]byte(nil), r.Body...)
+		} else {
+			n, _ := strconv.Atoi(off)
+			if n != len(file) {
+				t.Errorf("offset %d with %d bytes written", n, len(file))
+			}
+			file = append(file[:n], r.Body...)
+		}
+		return rawAnswer{status: 200, json: map[string]any{"file": map[string]any{"path": "/workspace/a", "size": len(file)}}}
+	})
+	b := cloudBox(t, c)
+	for _, tc := range []struct {
+		data  string
+		parts int
+		seek  bool
+	}{{"0123456789", 3, false}, {"01234567", 2, false}, {"0123", 1, false}, {"", 1, false}, {"0123456789", 3, true}, {"012", 1, true}} {
+		n := len(stub.seen)
+		var r io.Reader = struct{ io.Reader }{strings.NewReader(tc.data)} // not seekable
+		if tc.seek {
+			r = strings.NewReader(tc.data)
+		}
+		fi, err := b.Files().Upload(context.Background(), "/workspace/a", r)
+		if err != nil || string(file) != tc.data || fi.Size != int64(len(tc.data)) {
+			t.Fatalf("%q: %q %+v %v", tc.data, file, fi, err)
+		}
+		if got := len(stub.seen) - n; got != tc.parts {
+			t.Fatalf("%q: %d requests, want %d", tc.data, got, tc.parts)
+		}
+		if p := stub.seen[n].Path; strings.Contains(p, "offset") {
+			t.Fatalf("first part has an offset: %s", p)
+		}
 	}
 }

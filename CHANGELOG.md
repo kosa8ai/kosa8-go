@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `Files().Upload` of more than 100 MB failed: the API takes at most 100 MB a request (Cloudflare's
+  limit). An upload over `CloudUploadPartBytes` (64 MiB) now goes in parts, the first replacing
+  the file and the rest written at their offsets (`PUT …/files/raw?offset=`), each retried on its own.
 - `CloudSandbox.ExecStream(ctx, argv, opts, onOutput)`: the streamed exec (`stream: true`) the
   Python and JS SDKs have, with no 90 s limit (`TimeoutS` up to 86400), output delivered as it is
   printed, heartbeats skipped, a stalled stream given up after `CloudStreamIdle` (60 s), and
