@@ -126,7 +126,8 @@ clone, _ := cloud.Sandboxes.Create(ctx, kosa8.CloudCreateOptions{Snapshot: snap.
 _ = cloud.Snapshots.Delete(ctx, snap.ID)                   // also List, Get
 ```
 
-Also `DiskGB`, `Persistent`, `CPU: "dedicated"`, `Region` (`us`, `eu` or a region id), `Secrets`
+Also `DiskGB` (8..500, up to your plan's sandbox disk), `Persistent`, `Docker`, `KVM` (preview),
+`CPU: "dedicated"`, `Region` (`us-ash1`, the one region today, or the area `us`), `Secrets`
 (names) and `Egress`. `CloudListOptions` takes `Name` and `Labels`.
 
 Small sizes, for fleets of mostly idle sandboxes (RL rollouts, evals): a fraction of a vCPU
