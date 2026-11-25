@@ -43,7 +43,7 @@ const CloudTokenPrefix = "k8c_tok_"
 
 // CloudOptions configures a Cloud client.
 type CloudOptions struct {
-	APIKey     string              // default $KOSA8_API_KEY
+	APIKey     string              // default $KOSA8_API_KEY, then the key `kosa8 login` saved (~/.kosa8/cloud.json)
 	BaseURL    string              // default $KOSA8_CLOUD_URL, then DefaultCloudURL
 	HTTPClient *http.Client        // default a plain http.Client
 	Timeout    time.Duration       // per request; default 120 s
@@ -119,6 +119,11 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 		key = getenv("KOSA8_API_KEY")
 	}
 	key = strings.TrimSpace(key)
+	savedURL := ""
+	if key == "" {
+		// Signed in with `kosa8 login`: the CLI keeps the key in ~/.kosa8/cloud.json.
+		key, savedURL = savedLogin(getenv, o.Getenv != nil)
+	}
 	if key == "" {
 		return nil, usage("no kosa8 Cloud API key: %s", keyHint)
 	}
@@ -128,6 +133,9 @@ func NewCloud(o CloudOptions) (*Cloud, error) {
 	base := o.BaseURL
 	if base == "" {
 		base = getenv("KOSA8_CLOUD_URL")
+	}
+	if base == "" {
+		base = savedURL
 	}
 	if base == "" {
 		base = DefaultCloudURL
@@ -459,6 +467,12 @@ func cloudError(status int, body any, method, path string) *Error {
 	}
 	e := errorFromResponse(status, msgBody, method, path)
 	e.Code = code
+	if planLimitCodes[code] {
+		// A plan limit is a payment question whatever the status: Starter's
+		// running limit answers 429 and must not read as a rate limit (Is
+		// still matches ErrRateLimit for a 429, for code written before).
+		e.Kind = KindPaymentRequired
+	}
 	e.Body = body
 	e.UpgradeURL = upgrade
 	e.AgentMessage = agent

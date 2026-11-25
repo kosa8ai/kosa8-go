@@ -208,7 +208,7 @@ func (e *Error) Error() string {
 }
 
 // keyHint is what to do about a missing or refused API key.
-const keyHint = "set KOSA8_API_KEY or pass CloudOptions.APIKey; make a key at https://app.kosa8.com/app#keys"
+const keyHint = "run `kosa8 login`, set KOSA8_API_KEY or pass CloudOptions.APIKey; make a key at https://app.kosa8.com/app#keys"
 
 func (e *Error) Unwrap() error { return e.Err }
 
@@ -224,6 +224,9 @@ func (e *Error) Is(target error) bool {
 	}
 	if t.Kind == KindPolicy && e.Kind == KindApprovalRequired {
 		return true // an approval refusal is a policy refusal
+	}
+	if t.Kind == KindRateLimit && e.Kind == KindPaymentRequired && e.Status == 429 {
+		return true // a plan limit answered 429 (starter_limit) was a rate limit before
 	}
 	if t.Kind == KindTimeout && e.Kind == KindExecTimeout {
 		return true // an exec cut off by the cloud is a timeout too
