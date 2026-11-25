@@ -28,7 +28,7 @@ import (
 )
 
 // Version of this SDK.
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 // UserAgent is sent with every kosa8 Cloud request.
 const UserAgent = "kosa8-go/" + Version
