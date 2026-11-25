@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `NewCloud` with no `APIKey` and no `KOSA8_API_KEY` uses the key `kosa8 login` keeps in `~/.kosa8/cloud.json` (and its `api_url` unless `BaseURL` or `KOSA8_CLOUD_URL` is set). The no-key error names `kosa8 login`.
+- A plan limit answered with HTTP 429 (`starter_limit`) is `KindPaymentRequired` (`errors.Is(err, ErrPaymentRequired)`), and still matches `ErrRateLimit`.
+
 ## v0.9.0 - 2026-11-25
 
 - Autopilot bots: `Cloud.Bots` with `List` (bots, `PausedAll`, `PendingApprovals`), `Templates`,
