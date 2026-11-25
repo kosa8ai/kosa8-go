@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.9.0 - 2026-11-25
 
 - Autopilot bots: `Cloud.Bots` with `List` (bots, `PausedAll`, `PendingApprovals`), `Templates`,
   `Template(id)`, `Plan` (template or spec, optional 7-day `Replay`), `Compile(text)` (a sentence of
