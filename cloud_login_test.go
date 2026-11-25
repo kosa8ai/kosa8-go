@@ -1,6 +1,7 @@
 package kosa8
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func TestStarterLimit429IsPaymentRequired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Sandboxes.Create(t.Context(), CloudCreateOptions{})
+	_, err = c.Sandboxes.Create(context.Background(), CloudCreateOptions{})
 	if !errors.Is(err, ErrPaymentRequired) || !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("want payment required (and still rate limit): %v", err)
 	}
